@@ -42,7 +42,7 @@
 
 ## Beacon 交付流程
 
-Beacon 是一个结构化的四步交付循环，适合需要明确需求和验收标准的功能开发：
+Beacon 是一个结构化的四步交付循环，适合需要明确需求和验收标准的功能开发。它集成了 **OpenSpec**（文档规范）、**Superpowers**（行为纪律）和 **Oh-My-Agent**（角色协作）三大系统。
 
 ```bash
 # 启动 Beacon 流程
@@ -53,25 +53,205 @@ claude
 > /beacon docs/proposal.md
 ```
 
-### 四步流程
+### 六阶段流程
 
-| 阶段 | 说明 |
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| **需求补全** | `clarifying` | 主动追问，澄清需求细节 |
+| **方案设计** | `awaiting_approval` | 生成 OpenSpec 文档，等待确认 |
+| **明确确认** | - | 用户必须明确说「开始开发」 |
+| **开发协调** | `coordinating` | PM 规划任务，协调并行工作 |
+| **并行开发** | `implementing` | 前端/后端并行实施 |
+| **测试验收** | `verifying` | QA 验证，输出验收报告 |
+
+### 确认门禁
+
+实施阶段仅在用户**明确确认**后开始：
+
+```
+开始开发 / 确认开始 / 开始 / 继续开发
+```
+
+> ⚠️ **Superpowers 纪律**：AI 禁止直接跳到编码，必须经过澄清和确认流程。
+
+### OpenSpec 文档体系
+
+Beacon 会在 `openspec/changes/<change-id>/` 下生成标准文档：
+
+| 文件 | 用途 |
 |------|------|
-| **需求补全** | 主动追问，澄清需求细节 |
-| **方案设计** | 生成 OpenSpec 文档（overview.md、proposal.md、design.md、tasks.md） |
-| **明确确认** | 等待用户明确说「开始开发」才进入实施 |
-| **并行开发** | 协调前端/后端/QA 并行工作，更新验收文档 |
+| `overview.md` | 总览 + 执行状态追踪 |
+| `proposal.md` | 需求提案（Summary, Scope, Dependencies） |
+| `design.md` | 技术设计（Architecture, API Changes） |
+| `tasks.md` | 任务分解（Task List, Dependencies） |
+| `frontend/proposal.md` | 前端方案（UI 范围、验证行为） |
+| `backend/proposal.md` | 后端方案（API 形状、数据变更） |
+| `qa/proposal.md` | 测试方案（测试覆盖、验收清单） |
+| `qa/acceptance.md` | 验收报告（Tests Run, Verified, Unverified） |
 
-### 确认短语
+### 执行状态标记
 
-实施阶段仅在用户明确确认后开始：
+`overview.md` 中的状态流转：
 
-- `开始开发`
-- `确认开始`
-- `开始`
-- `继续开发`
+```yaml
+clarification_gate: pending → ready     # 需求澄清完成
+coordination_brief: pending → ready     # PM 规划完成
+frontend_handoff: pending → ready       # 前端交付完成
+backend_handoff: pending → ready        # 后端交付完成
+qa_status: pending → in_progress → completed  # QA 验收完成
+```
 
-> **提示**：Beacon 会自动在项目目录下创建 `.beacon/` 文件夹，存放所有 OpenSpec 文档。
+### 角色协作（Oh-My-Agent）
+
+| 角色 | 职责 |
+|------|------|
+| **pm/planner** | 确认依赖顺序、并行性、完成定义 |
+| **frontend** | UI、表单行为、验证、用户流程 |
+| **backend** | API、数据变更、验证逻辑 |
+| **qa** | 验证行为、运行测试、记录结果 |
+
+### Superpowers 行为纪律
+
+每个阶段强制注入的行为约束：
+
+| 阶段 | 强制行为 |
+|------|----------|
+| **clarifying** | `brainstorming` - 必须主动追问，解决歧义 |
+| **awaiting_approval** | `writing-plans` - 禁止直接编码，必须等待确认 |
+| **coordinating** | `subagent-driven-development` - 规划并行任务 |
+| **implementing** | `test-driven-development` - TDD，委托给角色工作器 |
+| **verifying** | `verification-before-completion` - 必须有验证证据 |
+| **completed** | 保留最终证据，不可静默扩展 |
+
+### 完整流程图
+
+```
+/beacon 实现用户登录功能
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│ Phase 1: 需求补全 (clarifying)           │
+│ • 主动追问：登录方式？第三方登录？验证码？  │
+│ • 更新 proposal.md, design.md, tasks.md  │
+│ • Superpowers: brainstorming             │
+└─────────────────────────────────────────┘
+         │ 用户回答完毕
+         ▼
+┌─────────────────────────────────────────┐
+│ Phase 2: 方案设计 (awaiting_approval)    │
+│ • 确保 proposal/design/tasks 全部填实    │
+│ • 总结最终范围，询问是否开始开发          │
+│ • ⚠️ 禁止直接编码！                       │
+└─────────────────────────────────────────┘
+         │ 用户说 "开始开发"
+         ▼
+┌─────────────────────────────────────────┐
+│ Phase 3: 开发协调 (coordinating)         │
+│ • pm/planner 生成执行简报                │
+│ • 规划前端/后端并行任务                   │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│ Phase 4: 并行开发 (implementing)         │
+│ • frontend: UI 实现                      │
+│ • backend: API 实现（可并行）            │
+│ • Superpowers: test-driven-development   │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│ Phase 5: 测试验收 (verifying)            │
+│ • QA 验证行为，更新 acceptance.md        │
+│ • Superpowers: verification-before-completion │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│ Phase 6: 完成收口 (completed)            │
+│ • 输出验收报告                           │
+│ • Tests Run / Verified / Unverified      │
+└─────────────────────────────────────────┘
+```
+
+### 三大系统详解
+
+#### OpenSpec - 文档规范系统
+
+**核心定位**："Agree before you build" — 在编写代码之前，让人与 AI 对需求达成共识。
+
+**设计哲学**：
+
+```text
+→ fluid not rigid          # 灵活而非僵化
+→ iterative not waterfall  # 迭代而非瀑布
+→ easy not complex         # 简单而非复杂
+→ built for brownfield     # 适用于存量项目
+```
+
+**核心职责**：定义"写什么" — 需求提案、技术设计、任务分解、状态追踪。
+
+#### Superpowers - 行为纪律系统
+
+**核心定位**："Mandatory workflows, not suggestions" — 强制性的工作流程，而非建议。
+
+**核心哲学**：
+
+| 原则 | 说明 |
+|------|------|
+| **Test-Driven Development** | 永远先写测试 |
+| **Systematic over ad-hoc** | 流程优于猜测 |
+| **Complexity reduction** | 简单性是首要目标 |
+| **Evidence over claims** | 验证后再声明成功 |
+
+**核心技能**：
+
+| 技能 | 触发时机 | 作用 |
+|------|----------|------|
+| `brainstorming` | 编码前 | 苏格拉底式提问，澄清需求 |
+| `writing-plans` | 设计确认后 | 生成详细实施计划 |
+| `subagent-driven-development` | 计划确认后 | 派发子代理执行 |
+| `test-driven-development` | 实施时 | RED-GREEN-REFACTOR 循环 |
+| `verification-before-completion` | 完成前 | 必须有验证证据 |
+
+**核心职责**：定义"怎么写" — 必须澄清、禁止跳过、TDD 循环、验证证据。
+
+#### Oh-My-Agent - 角色协作系统
+
+**核心定位**："Your Agent Team" — 像真实工程团队一样分工协作。
+
+**架构**：
+
+```
+Workflows (/plan /coordinate /orchestrate /review /debug)
+         ↓
+Orchestration (oma-pm ←→ oma-orchestrator)
+         ↓
+Domain Agents (frontend / backend / db / mobile / design)
+         ↓
+Quality (oma-qa / oma-debug)
+```
+
+**核心职责**：定义"谁来写" — PM 规划、前端实现、后端实现、QA 验收。
+
+#### 三大系统协作关系
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                         Beacon 流程                             │
+│                    (唯一用户入口)                               │
+└───────────────────────────┬────────────────────────────────────┘
+                            │
+            ┌───────────────┼───────────────┐
+            ↓               ↓               ↓
+    ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+    │   OpenSpec   │ │ Superpowers  │ │ Oh-My-Agent  │
+    │   文档规范    │ │   行为纪律    │ │   角色协作    │
+    └──────────────┘ └──────────────┘ └──────────────┘
+            │               │               │
+            ↓               ↓               ↓
+      定义"写什么"     定义"怎么写"     定义"谁来写"
+```
 
 ---
 
