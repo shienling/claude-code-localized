@@ -1,6 +1,7 @@
 import { access, mkdir, readFile, writeFile } from 'fs/promises'
 import { constants as fsConstants } from 'fs'
 import os from 'os'
+import { createHash } from 'crypto'
 import { basename, dirname, isAbsolute, join, resolve } from 'path'
 import { registerBundledSkill } from '../bundledSkills.js'
 import { getCwd } from '../../utils/cwd.js'
@@ -39,6 +40,7 @@ export type BeaconExecutionState =
 export type BeaconSessionState = {
   active: boolean
   changeId: string
+  changeTitle: string
   projectRoot: string
   targetPath: string
   overviewPath: string
@@ -99,6 +101,7 @@ type BeaconWorkspace =
       qaProposalPath: string
       qaAcceptancePath: string
       changeId: string
+      changeTitle: string
     }
   | {
       mode: 'new'
@@ -120,6 +123,7 @@ type BeaconWorkspace =
       qaProposalPath: string
       qaAcceptancePath: string
       changeId: string
+      changeTitle: string
     }
 
 export const BEACON_EXPLICIT_APPROVAL_PHRASES = [
@@ -502,7 +506,7 @@ function formatBeaconTaskTemplate(
 ): string {
   const constraints = template.constraints ?? []
   const body = [
-    `You are the Beacon ${template.role} worker for change ${state.changeId}.`,
+    `You are the Beacon ${template.role} worker for change ${state.changeTitle} (${state.changeId}).`,
     '',
     'Read:',
     ...template.filesToRead.map(path => `- ${path}`),
@@ -971,8 +975,9 @@ Required behavior:
 - focus on QA verification and acceptance closeout
 - keep \`${state.overviewPath}\` aligned with \`qa_status: in_progress\` during verification and \`qa_status: completed\` once the final acceptance closeout is done
 - update \`${state.qaAcceptancePath}\`
+- the closeout must prove three gates: build must pass, API smoke test must pass, and page-level contract checks must pass
 - build and execute a test matrix that covers happy paths, negative paths, regression risks, and security/abuse checks when applicable
-- run relevant tests/checks when possible
+- run relevant tests/checks when possible, and record the exact commands/results for the three gates
 - compare observed behavior against the approved proposal set, not just the implementation summary
 - escalate any mismatch immediately instead of smoothing it over in the final closeout
 - final output must follow the required acceptance structure exactly
@@ -1014,8 +1019,39 @@ function slugify(input: string): string {
   return normalized || 'change'
 }
 
+function extractChangeTitle(input: string): string {
+  const lines = input
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  if (lines.length === 0) return 'change'
+
+  const firstHeading = lines.find(line => /^#{1,6}\s+/.test(line))
+  if (firstHeading) {
+    return firstHeading.replace(/^#{1,6}\s+/, '').trim() || 'change'
+  }
+
+  const firstLine = lines[0]
+  return firstLine.replace(/^[\s>*-]+/, '').trim() || 'change'
+}
+
 function currentDateStamp(): string {
   return new Date().toISOString().slice(0, 10)
+}
+
+function shortHash(input: string): string {
+  return createHash('sha256').update(input).digest('hex').slice(0, 8)
+}
+
+function buildChangeId(input: string): string {
+  const hash = shortHash(input)
+  return `${currentDateStamp()}-c-${hash}`
+}
+
+function buildChangeTitle(input: string): string {
+  const title = extractChangeTitle(input)
+  return title || 'New change request'
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -1137,21 +1173,25 @@ async function scaffoldWorkspace(
 
     if (existingChangeRoot) {
       const changeId = basename(existingChangeRoot)
+      const changeTitle = buildChangeTitle(trimmed || changeId)
       const workspace = {
         mode: 'existing' as const,
         ...getPathsForChange(existingChangeRoot, changeId),
+        changeTitle,
       }
       await ensureWorkspaceFiles(workspace, trimmed || changeId)
       return workspace
     }
   }
 
-  const changeId = `${currentDateStamp()}-${slugify(trimmed)}`
+  const changeId = buildChangeId(trimmed)
+  const changeTitle = buildChangeTitle(trimmed)
   const projectRoot = resolvedTargetPath ?? fallbackProjectRoot ?? cwd
   const changeRoot = join(projectRoot, 'openspec', 'changes', changeId)
   const workspace = {
     mode: 'new' as const,
     ...getPathsForChange(changeRoot, changeId),
+    changeTitle,
   }
   await ensureWorkspaceFiles(workspace, trimmed || 'New change request')
   return workspace
@@ -1270,7 +1310,7 @@ async function ensureWorkspaceFiles(
   )
   await scaffoldFile(
     workspace.qaAcceptancePath,
-    `# QA Acceptance\n\n## Tests Run\n- Pending implementation\n\n## Verified\n- TBD\n\n## Unverified\n- TBD\n\n## Acceptance Summary\n- Pending verification\n\n${getAcceptanceGuideBlock()}`,
+    `# QA Acceptance\n\n## Build Check\n- Pending implementation\n\n## API Smoke Test\n- Pending implementation\n\n## Page Contract Check\n- Pending implementation\n\n## Tests Run\n- Pending implementation\n\n## Verified\n- TBD\n\n## Unverified\n- TBD\n\n## Acceptance Summary\n- Pending verification\n\n${getAcceptanceGuideBlock()}`,
   )
 }
 
@@ -1396,6 +1436,7 @@ export async function prepareBeaconSessionState(
   return {
     active: true,
     changeId: workspace.changeId,
+    changeTitle: workspace.changeTitle,
     projectRoot: workspace.projectRoot,
     targetPath: workspace.targetPath,
     overviewPath: workspace.overviewPath,
@@ -1589,7 +1630,7 @@ export async function advanceBeaconStageFromWorkspace(
 }
 
 export function buildBeaconStageTransitionFeedback(
-  previousState: Pick<BeaconSessionState, 'changeId' | 'stage'>,
+  previousState: Pick<BeaconSessionState, 'changeId' | 'changeTitle' | 'stage'>,
   nextState: Pick<BeaconSessionState, 'stage'>,
 ): string | null {
   if (previousState.stage === nextState.stage) {
@@ -1617,11 +1658,11 @@ export function buildBeaconStageTransitionFeedback(
 }
 
 export function buildBeaconStartFeedback(
-  state: Pick<BeaconSessionState, 'stage'>,
+  state: Pick<BeaconSessionState, 'stage' | 'changeTitle'>,
 ): string {
   return state.stage === 'awaiting_approval'
-    ? 'Beacon 已启动，当前需求、审查和安全文档已经基本补齐，接下来会先向用户做最终确认。'
-    : 'Beacon 已启动，当前先进入“需求补全”阶段，接下来会主动梳理需求、风险和安全约束并完善 openspec 文档。'
+    ? `Beacon 已启动，当前 change「${state.changeTitle}」的需求、审查和安全文档已经基本补齐，接下来会先向用户做最终确认。`
+    : `Beacon 已启动，当前先进入 change「${state.changeTitle}」的需求补全阶段，接下来会主动梳理需求、风险和安全约束并完善 openspec 文档。`
 }
 
 export function buildBeaconActiveMetaPrompt(
@@ -1651,6 +1692,7 @@ export function buildBeaconActiveMetaPrompt(
 
   return `# Beacon Session Context
 
+Change title: ${state.changeTitle}
 Change id: ${state.changeId}
 Mode: ${state.mode}
 Current phase: ${phase}
@@ -1830,6 +1872,7 @@ These are the default task shapes Beacon should use in implementation mode.
 ## qa
 - read overview + proposal + design + tasks + all role proposals + qa/acceptance.md + security docs when applicable
 - verify behavior and update acceptance.md
+- prove the three gates: build pass, API smoke pass, page-level contract pass
 - return Tests Run / Verified / Unverified / Acceptance Summary
 - build a test matrix and verify abuse cases, negative paths, and security regressions when the feature is attackable
 - make explicit what was not tested and why
@@ -1900,6 +1943,7 @@ Responsibilities:
 Responsibilities:
 - define test scope and acceptance checks
 - verify implemented behavior against the approved proposals
+- prove the three gates: build pass, API smoke pass, page-level contract pass
 - verify negative paths, abuse cases, and security regressions when applicable
 - confirm the final closeout evidence is complete
 - report both verified and unverified areas before completion
@@ -1924,6 +1968,7 @@ Responsibilities:
 ${modeText}
 
 Working directory: ${cwd}
+Change title: ${workspace.changeTitle}
 Change id: ${workspace.changeId}
 Current phase: ${currentPhase}
 Current stage: ${currentStage}

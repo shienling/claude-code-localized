@@ -218,6 +218,7 @@ export function getProposalTemplateBlock(kind: ProposalKind): string {
 export function getAcceptanceGuideBlock(): string {
   return (
     `## Closeout Guide\n` +
+    `- The change is not complete until all three gates have real evidence: build, API smoke test, and page-level contract check.\n` +
     `- Record only commands or checks that actually ran in \`Tests Run\`.\n` +
     `- Record only verified behavior in \`Verified\`.\n` +
     `- Record skipped, blocked, or risky areas in \`Unverified\`.\n` +
@@ -527,6 +528,15 @@ export function buildFinalCloseoutTemplateBlock(): string {
 
 Use this exact section structure in the final closeout response:
 
+## Build Check
+- list the build command that actually ran and its result
+
+## API Smoke Test
+- list the smoke test commands that actually ran and their results
+
+## Page Contract Check
+- list the pages/routes/contracts that were checked and their results
+
 ## Tests Run
 - list commands or checks that actually ran
 
@@ -698,6 +708,32 @@ export function ensureAcceptanceGuideSection(content: string): string {
   return `${content.trimEnd()}\n\n${getAcceptanceGuideBlock()}`
 }
 
+export function ensureAcceptanceGateSections(content: string): string {
+  if (
+    hasRequiredHeadings(content, [
+      'Build Check',
+      'API Smoke Test',
+      'Page Contract Check',
+    ])
+  ) {
+    return content
+  }
+
+  const gateBlock =
+    `## Build Check\n- Pending implementation\n\n` +
+    `## API Smoke Test\n- Pending implementation\n\n` +
+    `## Page Contract Check\n- Pending implementation\n\n`
+
+  if (/^# QA Acceptance$/m.test(content)) {
+    return content.replace(
+      /^# QA Acceptance\s*\n\s*\n/,
+      `# QA Acceptance\n\n${gateBlock}`,
+    )
+  }
+
+  return `# QA Acceptance\n\n${gateBlock}${content.trimStart()}`
+}
+
 export function ensureReviewGuideSection(
   content: string,
   kind:
@@ -765,6 +801,9 @@ export function isAcceptanceInProgress(content: string): boolean {
 
   if (
     !hasRequiredHeadings(content, [
+      'Build Check',
+      'API Smoke Test',
+      'Page Contract Check',
       'Tests Run',
       'Verified',
       'Unverified',
@@ -904,7 +943,9 @@ export async function normalizeBeaconWorkspaceDocs(
     'backend',
   )
   const normalizedQa = ensureProposalGuideSection(qaProposal, 'qa')
-  const normalizedAcceptance = ensureAcceptanceGuideSection(qaAcceptance)
+  const normalizedAcceptance = ensureAcceptanceGuideSection(
+    ensureAcceptanceGateSections(qaAcceptance),
+  )
 
   ;[
     overview,
