@@ -136,7 +136,7 @@ const WorkflowTool = feature('WORKFLOW_SCRIPTS')
 import type { ToolPermissionContext } from './Tool.js'
 import { getDenyRuleForTool } from './utils/permissions/permissions.js'
 import { hasEmbeddedSearchTools } from './utils/embeddedTools.js'
-import { isEnvTruthy } from './utils/envUtils.js'
+import { isEnvTruthy, isSlimMode } from './utils/envUtils.js'
 import { isPowerShellToolEnabled } from './utils/shell/shellToolUtils.js'
 import { isAgentSwarmsEnabled } from './utils/agentSwarmsEnabled.js'
 import { isWorktreeModeEnabled } from './utils/worktreeModeEnabled.js'
@@ -250,6 +250,27 @@ export function getAllBaseTools(): Tools {
   ]
 }
 
+function getSlimBaseTools(): Tools {
+  return [
+    AgentTool,
+    TaskOutputTool,
+    BashTool,
+    ...(hasEmbeddedSearchTools() ? [] : [GlobTool, GrepTool]),
+    FileReadTool,
+    FileEditTool,
+    FileWriteTool,
+    WebFetchTool,
+    WebSearchTool,
+    TodoWriteTool,
+    TaskStopTool,
+    AskUserQuestionTool,
+    SkillTool,
+    BriefTool,
+    ListMcpResourcesTool,
+    ReadMcpResourceTool,
+  ]
+}
+
 /**
  * Filters out tools that are blanket-denied by the permission context.
  * A tool is filtered out if there's a deny rule matching its name with no
@@ -295,6 +316,15 @@ export const getTools = (permissionContext: ToolPermissionContext): Tools => {
       simpleTools.push(AgentTool, TaskStopTool, getSendMessageTool())
     }
     return filterToolsByDenyRules(simpleTools, permissionContext)
+  }
+
+  if (isSlimMode()) {
+    const slimTools = filterToolsByDenyRules(
+      getSlimBaseTools(),
+      permissionContext,
+    )
+    const isEnabled = slimTools.map(tool => tool.isEnabled())
+    return slimTools.filter((_, i) => isEnabled[i])
   }
 
   // Get all base tools and filter out special tools that get added conditionally

@@ -45,6 +45,12 @@ import { buildPluginCommandTelemetryFields } from '../telemetry/pluginTelemetry.
 import { getAssistantMessageContentLength } from '../tokens.js';
 import { createAgentId } from '../uuid.js';
 import { getWorkload } from '../workloadContext.js';
+import {
+  buildBeaconStartFeedback,
+  buildBeaconStageTransitionFeedback,
+  prepareBeaconSessionState,
+  syncBeaconOverviewPhase,
+} from '../../skills/bundled/beacon.js';
 import type { ProcessUserInputBaseResult, ProcessUserInputContext } from './processUserInput.js';
 type SlashCommandResult = ProcessUserInputBaseResult & {
   command: Command;
@@ -867,6 +873,27 @@ async function getMessagesForPromptSlashCommand(command: CommandBase & PromptCom
     };
   }
   const result = await command.getPromptForCommand(args, context);
+
+  if (getCommandName(command) === 'beacon') {
+    const priorBeacon = context.getAppState().beacon;
+    const beaconState = await prepareBeaconSessionState(
+      args,
+      process.cwd(),
+      priorBeacon?.projectRoot,
+    );
+    await syncBeaconOverviewPhase(beaconState);
+    context.setAppState(prev => ({
+      ...prev,
+      beacon: beaconState
+    }));
+    const initialFeedback = buildBeaconStartFeedback(beaconState);
+    if (initialFeedback) {
+      result.unshift({
+        type: 'text',
+        text: initialFeedback
+      });
+    }
+  }
 
   // Register skill hooks if defined. Under ["hooks"]-only (skills not locked),
   // user skills still load and reach this point — block hook REGISTRATION here

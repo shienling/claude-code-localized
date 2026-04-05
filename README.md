@@ -216,6 +216,14 @@ bun --env-file=.env ./src/localRecoveryCli.ts
 CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/claude-haha
 ```
 
+如果你想在保留核心对话与编码能力的前提下进一步收敛功能面，可以使用精简模式：
+
+```bash
+./bin/claude-haha --slim
+```
+
+`--slim` 会跳过插件、技能、工作流这类扩展命令发现，同时收窄内置工具与命令暴露面，更适合本地轻量运行和后续做裁剪版发行。
+
 ---
 
 ## Computer Use 桌面控制

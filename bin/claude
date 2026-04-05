@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 保存用户当前的工作目录
+USER_CWD="$(pwd)"
+
+# 获取脚本的真实路径（解析软链接）
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+done
+
+# 获取项目根目录
+ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+cd "$ROOT_DIR"
+
+# Force recovery CLI (simple readline REPL, no Ink TUI)
+if [[ "${CLAUDE_CODE_FORCE_RECOVERY_CLI:-0}" == "1" ]]; then
+  exec bun --env-file=.env ./src/localRecoveryCli.ts "$@"
+fi
+
+# Default: full CLI with Ink TUI
+# 通过环境变量传递用户的工作目录
+export CLAUDE_USER_CWD="$USER_CWD"
+exec bun --env-file=.env ./src/entrypoints/cli.tsx "$@"

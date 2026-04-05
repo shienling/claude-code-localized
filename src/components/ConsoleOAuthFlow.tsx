@@ -5,12 +5,13 @@ import { installOAuthTokens } from '../cli/handlers/auth.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import { setClipboard } from '../ink/termio/osc.js';
 import { useTerminalNotification } from '../ink/useTerminalNotification.js';
-import { Box, Link, Text } from '../ink.js';
+import { Box, Link, Text, useInput } from '../ink.js';
 import { useKeybinding } from '../keybindings/useKeybinding.js';
 import { getSSLErrorHint } from '../services/api/errorUtils.js';
 import { sendNotification } from '../services/notifier.js';
 import { OAuthService } from '../services/oauth/index.js';
 import { getOauthAccountInfo, validateForceLoginOrg } from '../utils/auth.js';
+import { saveGlobalConfig } from '../utils/config.js';
 import { logError } from '../utils/log.js';
 import { getSettings_DEPRECATED } from '../utils/settings/settings.js';
 import { Select } from './CustomSelect/select.js';
@@ -29,6 +30,15 @@ type OAuthStatus = {
 | {
   state: 'platform_setup';
 } // Show platform setup info (Bedrock/Vertex/Foundry)
+| {
+  state: 'minimax_setup';
+} // Show MiniMax setup info
+| {
+  state: 'minimax_model_select';
+} // Select MiniMax model
+| {
+  state: 'minimax_api_key_input';
+} // Input MiniMax API key
 | {
   state: 'ready_to_start';
 } // Flow started, waiting for browser to open
@@ -84,6 +94,9 @@ export function ConsoleOAuthFlow({
     // Use Claude AI auth for setup-token mode to support user:inference scope
     return mode === 'setup-token' || forceLoginMethod === 'claudeai';
   });
+  const [minimaxApiKey, setMinimaxApiKey] = useState('');
+  const [minimaxApiKeyCursorOffset, setMinimaxApiKeyCursorOffset] = useState(0);
+  const [minimaxModel, setMinimaxModel] = useState('MiniMax-M2.7-highspeed');
   // After a few seconds we suggest the user to copy/paste url if the
   // browser did not open automatically. In this flow we expect the user to
   // copy the code from the browser and paste it in the terminal
@@ -127,6 +140,29 @@ export function ConsoleOAuthFlow({
   }, {
     context: 'Confirmation',
     isActive: oauthStatus.state === 'platform_setup'
+  });
+
+  // Handle Enter to select default (China) region
+  useKeybinding('confirm:yes', () => {
+    if (oauthStatus.state === 'minimax_setup') {
+      logEvent('tengu_oauth_minimax_cn_selected', {});
+      setOAuthStatus({ state: 'minimax_model_select' });
+    }
+  }, {
+    context: 'Confirmation',
+    isActive: oauthStatus.state === 'minimax_setup'
+  });
+
+  // Handle numeric input for MiniMax region selection
+  useInput((input, key) => {
+    if (oauthStatus.state === 'minimax_setup') {
+      if (input === '1' || input === '2') {
+        logEvent('tengu_oauth_minimax_cn_selected', {});
+        setOAuthStatus({ state: 'minimax_model_select' });
+      }
+    }
+  }, {
+    isActive: oauthStatus.state === 'minimax_setup'
   });
 
   // Handle Enter to retry on error state
@@ -182,6 +218,52 @@ export function ConsoleOAuthFlow({
         toRetry: {
           state: 'waiting_for_login',
           url
+        }
+      });
+    }
+  }
+
+  async function handleMinimaxApiKeySubmit(value: string) {
+    try {
+      if (!value.trim()) {
+        setOAuthStatus({
+          state: 'error',
+          message: 'API key cannot be empty',
+          toRetry: {
+            state: 'minimax_api_key_input'
+          }
+        });
+        return;
+      }
+
+      // Save Minimax API key to config
+      saveGlobalConfig(current => ({
+        ...current,
+        env: {
+          ...current.env,
+          ANTHROPIC_AUTH_TOKEN: value.trim(),
+          ANTHROPIC_BASE_URL: 'https://api.minimaxi.com/anthropic',
+          ANTHROPIC_MODEL: minimaxModel,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: minimaxModel,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: minimaxModel,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: minimaxModel
+        }
+      }));
+
+      setOAuthStatus({
+        state: 'success'
+      });
+      void sendNotification({
+        message: 'Minimax API key set successfully',
+        notificationType: 'auth_success'
+      }, terminal);
+    } catch (err: unknown) {
+      logError(err);
+      setOAuthStatus({
+        state: 'error',
+        message: (err as Error).message,
+        toRetry: {
+          state: 'minimax_api_key_input'
         }
       });
     }
@@ -325,7 +407,7 @@ export function ConsoleOAuthFlow({
             </Box>
           </Box>}
       <Box paddingLeft={1} flexDirection="column" gap={1}>
-        <OAuthStatusMessage oauthStatus={oauthStatus} mode={mode} startingMessage={startingMessage} forcedMethodMessage={forcedMethodMessage} showPastePrompt={showPastePrompt} pastedCode={pastedCode} setPastedCode={setPastedCode} cursorOffset={cursorOffset} setCursorOffset={setCursorOffset} textInputColumns={textInputColumns} handleSubmitCode={handleSubmitCode} setOAuthStatus={setOAuthStatus} setLoginWithClaudeAi={setLoginWithClaudeAi} />
+        <OAuthStatusMessage oauthStatus={oauthStatus} mode={mode} startingMessage={startingMessage} forcedMethodMessage={forcedMethodMessage} showPastePrompt={showPastePrompt} pastedCode={pastedCode} setPastedCode={setPastedCode} cursorOffset={cursorOffset} setCursorOffset={setCursorOffset} textInputColumns={textInputColumns} handleSubmitCode={handleSubmitCode} setOAuthStatus={setOAuthStatus} setLoginWithClaudeAi={setLoginWithClaudeAi} minimaxApiKey={minimaxApiKey} setMinimaxApiKey={setMinimaxApiKey} minimaxApiKeyCursorOffset={minimaxApiKeyCursorOffset} setMinimaxApiKeyCursorOffset={setMinimaxApiKeyCursorOffset} handleMinimaxApiKeySubmit={handleMinimaxApiKeySubmit} minimaxModel={minimaxModel} setMinimaxModel={setMinimaxModel} />
       </Box>
     </Box>;
 }
@@ -343,6 +425,13 @@ type OAuthStatusMessageProps = {
   handleSubmitCode: (value: string, url: string) => void;
   setOAuthStatus: (status: OAuthStatus) => void;
   setLoginWithClaudeAi: (value: boolean) => void;
+  minimaxApiKey: string;
+  setMinimaxApiKey: (value: string) => void;
+  minimaxApiKeyCursorOffset: number;
+  setMinimaxApiKeyCursorOffset: (offset: number) => void;
+  handleMinimaxApiKeySubmit: (value: string) => void;
+  minimaxModel: string;
+  setMinimaxModel: (value: string) => void;
 };
 function OAuthStatusMessage(t0) {
   const $ = _c(51);
@@ -359,7 +448,14 @@ function OAuthStatusMessage(t0) {
     textInputColumns,
     handleSubmitCode,
     setOAuthStatus,
-    setLoginWithClaudeAi
+    setLoginWithClaudeAi,
+    minimaxApiKey,
+    setMinimaxApiKey,
+    minimaxApiKeyCursorOffset,
+    setMinimaxApiKeyCursorOffset,
+    handleMinimaxApiKeySubmit,
+    minimaxModel,
+    setMinimaxModel
   } = t0;
   switch (oauthStatus.state) {
     case "idle":
@@ -403,6 +499,9 @@ function OAuthStatusMessage(t0) {
         let t6;
         if ($[5] === Symbol.for("react.memo_cache_sentinel")) {
           t6 = [t4, t5, {
+            label: <Text>MiniMax (国内) ·{" "}<Text dimColor={true}>M2.7 OAuth 登录</Text>{"\n"}</Text>,
+            value: "minimax"
+          }, {
             label: <Text>3rd-party platform ·{" "}<Text dimColor={true}>Amazon Bedrock, Microsoft Foundry, or Vertex AI</Text>{"\n"}</Text>,
             value: "platform"
           }];
@@ -417,6 +516,11 @@ function OAuthStatusMessage(t0) {
                 logEvent("tengu_oauth_platform_selected", {});
                 setOAuthStatus({
                   state: "platform_setup"
+                });
+              } else if (value_0 === "minimax") {
+                logEvent("tengu_oauth_minimax_selected", {});
+                setOAuthStatus({
+                  state: "minimax_setup"
                 });
               } else {
                 setOAuthStatus({
@@ -505,15 +609,160 @@ function OAuthStatusMessage(t0) {
         }
         return t8;
       }
+    case "minimax_setup":
+      {
+        let t1;
+        if ($[20] === Symbol.for("react.memo_cache_sentinel")) {
+          t1 = <Text bold={true}>Using MiniMax</Text>;
+          $[20] = t1;
+        } else {
+          t1 = $[20];
+        }
+        let t2;
+        let t3;
+        if ($[21] === Symbol.for("react.memo_cache_sentinel")) {
+          t2 = <Text>Claude Code supports Minimax through its Anthropic-compatible API.</Text>;
+          t3 = <Text>You'll need to select a model and enter your Minimax API key to continue.</Text>;
+          $[21] = t2;
+          $[22] = t3;
+        } else {
+          t2 = $[21];
+          t3 = $[22];
+        }
+        let t4;
+        if ($[23] === Symbol.for("react.memo_cache_sentinel")) {
+          t4 = <Text bold={true}>Configuration:</Text>;
+          $[23] = t4;
+        } else {
+          t4 = $[23];
+        }
+        let t5;
+        if ($[24] === Symbol.for("react.memo_cache_sentinel")) {
+          t5 = <Text>· API Base URL: https://api.minimaxi.com/anthropic</Text>;
+          $[24] = t5;
+        } else {
+          t5 = $[24];
+        }
+        let t7;
+        if ($[26] !== setOAuthStatus) {
+          t7 = <Box marginTop={1}><Text color="permission">Press <Text bold={true}>Enter</Text> to select a Minimax model.</Text></Box>;
+          $[26] = setOAuthStatus;
+          $[27] = t7;
+        } else {
+          t7 = $[27];
+        }
+        let t8;
+        if ($[28] !== t1 || $[29] !== t2 || $[30] !== t3 || $[31] !== t4 || $[32] !== t5 || $[34] !== t7) {
+          t8 = <Box flexDirection="column" gap={1} marginTop={1}>{t1}<Box flexDirection="column" gap={1}>{t2}{t3}{t4}{t5}{t7}</Box></Box>;
+          $[28] = t1;
+          $[29] = t2;
+          $[30] = t3;
+          $[31] = t4;
+          $[32] = t5;
+          $[34] = t7;
+          $[35] = t8;
+        } else {
+          t8 = $[35];
+        }
+        return t8;
+      }
+    case "minimax_model_select":
+      {
+        let t1;
+        if ($[36] === Symbol.for("react.memo_cache_sentinel")) {
+          t1 = <Text bold={true}>Select Minimax Model</Text>;
+          $[36] = t1;
+        } else {
+          t1 = $[36];
+        }
+        let t2;
+        if ($[37] === Symbol.for("react.memo_cache_sentinel")) {
+          t2 = <Text>Choose which Minimax model version to use:</Text>;
+          $[37] = t2;
+        } else {
+          t2 = $[37];
+        }
+        let t3;
+        if ($[38] !== setMinimaxModel || $[39] !== setOAuthStatus) {
+          t3 = <Box><Select options={[
+            {
+              label: <Text>MiniMax-M2.7-highspeed</Text>,
+              value: "MiniMax-M2.7-highspeed"
+            },
+            {
+              label: <Text>MiniMax-M2.5</Text>,
+              value: "MiniMax-M2.5"
+            },
+            {
+              label: <Text>MiniMax-M2.1</Text>,
+              value: "MiniMax-M2.1"
+            }
+          ]} onChange={value => {
+            setMinimaxModel(value);
+            setOAuthStatus({
+              state: 'minimax_api_key_input'
+            });
+          }} /></Box>;
+          $[38] = setMinimaxModel;
+          $[39] = setOAuthStatus;
+          $[40] = t3;
+        } else {
+          t3 = $[40];
+        }
+        let t4;
+        if ($[41] !== t1 || $[42] !== t2 || $[43] !== t3) {
+          t4 = <Box flexDirection="column" gap={1} marginTop={1}>{t1}{t2}{t3}</Box>;
+          $[41] = t1;
+          $[42] = t2;
+          $[43] = t3;
+          $[44] = t4;
+        } else {
+          t4 = $[44];
+        }
+        return t4;
+      }
+    case "minimax_api_key_input":
+      {
+        let t1;
+        if ($[51] === Symbol.for("react.memo_cache_sentinel")) {
+          t1 = <Text>Enter your Minimax API key:</Text>;
+          $[51] = t1;
+        } else {
+          t1 = $[51];
+        }
+        let t2;
+        if ($[52] !== minimaxApiKeyCursorOffset || $[53] !== handleMinimaxApiKeySubmit || $[54] !== minimaxApiKey || $[55] !== setMinimaxApiKeyCursorOffset || $[56] !== setMinimaxApiKey || $[57] !== textInputColumns) {
+          t2 = <Box><TextInput value={minimaxApiKey} onChange={setMinimaxApiKey} onSubmit={handleMinimaxApiKeySubmit} cursorOffset={minimaxApiKeyCursorOffset} onChangeCursorOffset={setMinimaxApiKeyCursorOffset} columns={textInputColumns} mask="*" /></Box>;
+          $[52] = minimaxApiKeyCursorOffset;
+          $[53] = handleMinimaxApiKeySubmit;
+          $[54] = minimaxApiKey;
+          $[55] = setMinimaxApiKeyCursorOffset;
+          $[56] = setMinimaxApiKey;
+          $[57] = textInputColumns;
+          $[58] = t2;
+        } else {
+          t2 = $[58];
+        }
+        let t3;
+        if ($[59] !== t1 || $[60] !== t2) {
+          t3 = <Box flexDirection="column" gap={1}>{t1}{t2}</Box>;
+          $[59] = t1;
+          $[60] = t2;
+          $[61] = t3;
+        } else {
+          t3 = $[61];
+        }
+        return t3;
+      }
     case "waiting_for_login":
       {
         let t1;
-        if ($[20] !== forcedMethodMessage) {
+        if ($[28] !== forcedMethodMessage) {
           t1 = forcedMethodMessage && <Box><Text dimColor={true}>{forcedMethodMessage}</Text></Box>;
-          $[20] = forcedMethodMessage;
-          $[21] = t1;
+          $[28] = forcedMethodMessage;
+          $[29] = t1;
         } else {
-          t1 = $[21];
+          t1 = $[29];
         }
         let t2;
         if ($[22] !== showPastePrompt) {

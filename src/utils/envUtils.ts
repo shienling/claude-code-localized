@@ -65,6 +65,18 @@ export function isBareMode(): boolean {
 }
 
 /**
+ * --slim / CLAUDE_CODE_SLIM — stronger local-lite profile that keeps the core
+ * chat/coding flow but skips extension-style command discovery and trims the
+ * built-in tool/command surface.
+ */
+export function isSlimMode(): boolean {
+  return (
+    isEnvTruthy(process.env.CLAUDE_CODE_SLIM) ||
+    process.argv.includes('--slim')
+  )
+}
+
+/**
  * Parses an array of environment variable strings into a key-value object
  * @param envVars Array of strings in KEY=VALUE format
  * @returns Object with key-value pairs

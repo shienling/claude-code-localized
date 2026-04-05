@@ -201,6 +201,7 @@ const usageReport: Command = {
 import oauthRefresh from './commands/oauth-refresh/index.js'
 import debugToolCall from './commands/debug-tool-call/index.js'
 import { getSettingSourceName } from './utils/settings/constants.js'
+import { isSlimMode } from './utils/envUtils.js'
 import {
   type Command,
   getCommandName,
@@ -332,7 +333,7 @@ const COMMANDS = memoize((): Command[] => [
   hooks,
   exportCommand,
   sandboxToggle,
-  ...(!isUsing3PServices() ? [logout, login()] : []),
+  ...(!isSlimMode() && !isUsing3PServices() ? [logout, login()] : []),
   passes,
   ...(peersCmd ? [peersCmd] : []),
   tasks,
@@ -347,6 +348,42 @@ export const builtInCommandNames = memoize(
   (): Set<string> =>
     new Set(COMMANDS().flatMap(_ => [_.name, ...(_.aliases ?? [])])),
 )
+
+const SLIM_COMMAND_NAMES = new Set([
+  'add-dir',
+  'agents',
+  'branch',
+  'clear',
+  'compact',
+  'config',
+  'context',
+  'cost',
+  'diff',
+  'doctor',
+  'exit',
+  'export',
+  'files',
+  'help',
+  'hooks',
+  'init',
+  'keybindings',
+  'mcp',
+  'memory',
+  'model',
+  'output-style',
+  'permissions',
+  'plan',
+  'review',
+  'rewind',
+  'session',
+  'skills',
+  'status',
+  'tasks',
+  'terminal-setup',
+  'theme',
+  'usage',
+  'vim',
+])
 
 async function getSkills(cwd: string): Promise<{
   skillDirCommands: Command[]
@@ -445,6 +482,10 @@ export function meetsAvailabilityRequirement(cmd: Command): boolean {
  * because loading is expensive (disk I/O, dynamic imports).
  */
 const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
+  if (isSlimMode()) {
+    return COMMANDS()
+  }
+
   const [
     { skillDirCommands, pluginSkills, bundledSkills, builtinPluginSkills },
     pluginCommands,
@@ -475,12 +516,18 @@ export async function getCommands(cwd: string): Promise<Command[]> {
   const allCommands = await loadAllCommands(cwd)
 
   // Get dynamic skills discovered during file operations
-  const dynamicSkills = getDynamicSkills()
+  const dynamicSkills = isSlimMode() ? [] : getDynamicSkills()
 
   // Build base commands without dynamic skills
-  const baseCommands = allCommands.filter(
-    _ => meetsAvailabilityRequirement(_) && isCommandEnabled(_),
-  )
+  const baseCommands = allCommands.filter(_ => {
+    if (!meetsAvailabilityRequirement(_) || !isCommandEnabled(_)) {
+      return false
+    }
+    if (!isSlimMode()) {
+      return true
+    }
+    return SLIM_COMMAND_NAMES.has(_.name)
+  })
 
   if (dynamicSkills.length === 0) {
     return baseCommands

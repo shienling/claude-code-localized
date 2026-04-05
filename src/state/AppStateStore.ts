@@ -22,6 +22,7 @@ import type { AgentId } from '../types/ids.js'
 import type { Message, UserMessage } from '../types/message.js'
 import type { LoadedPlugin, PluginError } from '../types/plugin.js'
 import type { DeepImmutable } from '../types/utils.js'
+import type { BeaconSessionState } from '../skills/bundled/beacon.js'
 import {
   type AttributionState,
   createEmptyAttributionState,
@@ -449,6 +450,7 @@ export type AppState = DeepImmutable<{
   // Races against local UI + bridge + hooks + classifier via claim() in
   // interactiveHandler.ts. Constructed once in useManageMCPConnections.
   channelPermissionCallbacks?: ChannelPermissionCallbacks
+  beacon?: BeaconSessionState
 }
 
 export type AppStateStore = Store<AppState>
@@ -565,5 +567,6 @@ export function getDefaultAppState(): AppState {
     effortValue: undefined,
     activeOverlays: new Set<string>(),
     fastMode: false,
+    beacon: undefined,
   }
 }

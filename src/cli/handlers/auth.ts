@@ -20,6 +20,7 @@ import {
 import { getOauthProfileFromOauthToken } from '../../services/oauth/getOauthProfile.js'
 import { OAuthService } from '../../services/oauth/index.js'
 import type { OAuthTokens } from '../../services/oauth/types.js'
+
 import {
   clearOAuthTokenCache,
   getAnthropicApiKeyWithSource,
@@ -36,6 +37,7 @@ import { isRunningOnHomespace } from '../../utils/envUtils.js'
 import { errorMessage } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
 import { getAPIProvider } from '../../utils/model/providers.js'
+import { getSecureStorage } from '../../utils/secureStorage/index.js'
 import { getInitialSettings } from '../../utils/settings/settings.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import {
@@ -108,6 +110,8 @@ export async function installOAuthTokens(tokens: OAuthTokens): Promise<void> {
 
   await clearAuthRelatedCaches()
 }
+
+
 
 export async function authLogin({
   email,
