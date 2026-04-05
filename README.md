@@ -13,6 +13,7 @@
 ## 目录
 
 - [功能](#功能)
+- [Beacon 交付流程](#beacon-交付流程)
 - [架构概览](#架构概览)
 - [快速开始](#快速开始)
 - [环境变量说明](#环境变量说明)
@@ -32,9 +33,45 @@
 - 支持 MCP 服务器、插件、Skills
 - 支持自定义 API 端点和模型（[第三方模型使用指南](docs/third-party-models.md)）
 - **Computer Use 桌面控制**（截屏、鼠标、键盘、应用管理）— [使用指南](docs/computer-use.md)
+- **Beacon 交付流程**（需求澄清 → 方案设计 → 明确确认 → 并行开发 → 测试验收）
 - 降级 Recovery CLI 模式
 
 > **Computer Use 说明**：本项目包含**魔改版的 Computer Use** 功能。官方实现依赖 Anthropic 私有原生模块，我们替换了整个底层操作层，使用 Python bridge（`pyautogui` + `mss` + `pyobjc`）实现，使得任何人都可以在 macOS 上使用。详见 [Computer Use 功能指南](docs/computer-use.md)。
+
+---
+
+## Beacon 交付流程
+
+Beacon 是一个结构化的四步交付循环，适合需要明确需求和验收标准的功能开发：
+
+```bash
+# 启动 Beacon 流程
+claude
+> /beacon 实现一个用户登录功能
+
+# 或指定已有的 OpenSpec 文档
+> /beacon docs/proposal.md
+```
+
+### 四步流程
+
+| 阶段 | 说明 |
+|------|------|
+| **需求补全** | 主动追问，澄清需求细节 |
+| **方案设计** | 生成 OpenSpec 文档（overview.md、proposal.md、design.md、tasks.md） |
+| **明确确认** | 等待用户明确说「开始开发」才进入实施 |
+| **并行开发** | 协调前端/后端/QA 并行工作，更新验收文档 |
+
+### 确认短语
+
+实施阶段仅在用户明确确认后开始：
+
+- `开始开发`
+- `确认开始`
+- `开始`
+- `继续开发`
+
+> **提示**：Beacon 会自动在项目目录下创建 `.beacon/` 文件夹，存放所有 OpenSpec 文档。
 
 ---
 
@@ -58,6 +95,30 @@
 ---
 
 ## 快速开始
+
+#### 全局安装（推荐）
+
+运行安装脚本后，可以在任意目录使用 `claude` 命令：
+
+```bash
+# 运行安装脚本
+./install.sh
+
+# 安装完成后，在任意目录启动
+claude
+
+# 查看帮助
+claude --help
+```
+
+安装脚本会：
+1. 检查 Bun 是否安装
+2. 安装项目依赖
+3. 创建全局 `claude` 命令链接
+
+> **卸载**：运行 `./uninstall.sh` 即可移除全局命令。
+
+#### 项目目录启动方式运行
 
 ### 1. 安装 Bun
 
