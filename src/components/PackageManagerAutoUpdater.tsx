@@ -27,6 +27,8 @@ export function PackageManagerAutoUpdater(t0) {
   let t1;
   if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
     t1 = async () => {
+      // 禁用自动更新检查
+      return;
       false || false;
       if (isAutoUpdaterDisabled()) {
         return;

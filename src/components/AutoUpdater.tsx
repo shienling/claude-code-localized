@@ -46,6 +46,8 @@ export function AutoUpdater({
   const isUpdatingRef = useRef(isUpdating);
   isUpdatingRef.current = isUpdating;
   const checkForUpdates = React.useCallback(async () => {
+    // 禁用自动更新检查
+    return;
     if (isUpdatingRef.current) {
       return;
     }
