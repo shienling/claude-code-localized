@@ -1108,8 +1108,11 @@ async function run(): Promise<CommanderCommand> {
       ide = false,
       sessionId,
       includeHookEvents,
-      includePartialMessages
+      includePartialMessages,
+      yes
     } = options;
+    // Handle -y/--yes flag for skipping all permission prompts
+    const finalAllowDangerouslySkipPermissions = allowDangerouslySkipPermissions || yes || false;
     if (options.prefill) {
       seedEarlyInput(options.prefill);
     }
@@ -1754,7 +1757,7 @@ async function run(): Promise<CommanderCommand> {
       disallowedToolsCli: disallowedTools,
       baseToolsCli: baseTools,
       permissionMode,
-      allowDangerouslySkipPermissions,
+      allowDangerouslySkipPermissions: finalAllowDangerouslySkipPermissions,
       addDirs: addDir
     });
     let toolPermissionContext = initResult.toolPermissionContext;
@@ -1935,7 +1938,7 @@ async function run(): Promise<CommanderCommand> {
       const {
         setup
       } = await import('./setup.js');
-      await setup(preSetupCwd, permissionMode, allowDangerouslySkipPermissions, worktreeEnabled, worktreeName, tmuxEnabled, sessionId ? validateUuid(sessionId) : undefined, worktreePRNumber, messagingSocketPath);
+      await setup(preSetupCwd, permissionMode, finalAllowDangerouslySkipPermissions, worktreeEnabled, worktreeName, tmuxEnabled, sessionId ? validateUuid(sessionId) : undefined, worktreePRNumber, messagingSocketPath);
     })();
     const commandsPromise = worktreeEnabled ? null : getCommands(preSetupCwd);
     const agentDefsPromise = worktreeEnabled ? null : getAgentDefinitionsWithOverrides(preSetupCwd);
@@ -2250,7 +2253,7 @@ async function run(): Promise<CommanderCommand> {
       });
       logForDebugging('[STARTUP] Running showSetupScreens()...');
       const setupScreensStart = Date.now();
-      const onboardingShown = await showSetupScreens(root, permissionMode, allowDangerouslySkipPermissions, commands, enableClaudeInChrome, devChannels);
+      const onboardingShown = await showSetupScreens(root, permissionMode, finalAllowDangerouslySkipPermissions, commands, enableClaudeInChrome, devChannels);
       logForDebugging(`[STARTUP] showSetupScreens() completed in ${Date.now() - setupScreensStart}ms`);
 
       // Now that trust is established and GrowthBook has auth headers,
@@ -2523,7 +2526,7 @@ async function run(): Promise<CommanderCommand> {
       dangerouslySkipPermissionsPassed: dangerouslySkipPermissions ?? false,
       permissionMode,
       modeIsBypass: permissionMode === 'bypassPermissions',
-      allowDangerouslySkipPermissionsPassed: allowDangerouslySkipPermissions,
+      allowDangerouslySkipPermissionsPassed: finalAllowDangerouslySkipPermissions,
       systemPromptFlag: systemPrompt ? options.systemPromptFile ? 'file' : 'flag' : undefined,
       appendSystemPromptFlag: appendSystemPrompt ? options.appendSystemPromptFile ? 'file' : 'flag' : undefined,
       thinkingConfig,
@@ -2666,7 +2669,7 @@ async function run(): Promise<CommanderCommand> {
 
       // Check if bypassPermissions should be disabled based on Statsig gate
       // This runs in parallel to the code below, to avoid blocking the main loop.
-      if (toolPermissionContext.mode === 'bypassPermissions' || allowDangerouslySkipPermissions) {
+      if (toolPermissionContext.mode === 'bypassPermissions' || finalAllowDangerouslySkipPermissions) {
         void checkAndDisableBypassPermissions(toolPermissionContext);
       }
 
@@ -3822,6 +3825,7 @@ async function run(): Promise<CommanderCommand> {
   // Worktree flags
   program.option('-w, --worktree [name]', 'Create a new git worktree for this session (optionally specify a name)');
   program.option('--tmux', 'Create a tmux session for the worktree (requires --worktree). Uses iTerm2 native panes when available; use --tmux=classic for traditional tmux.');
+  program.option('-y, --yes', 'Skip all permission prompts (dangerous)');
   if (canUserConfigureAdvisor()) {
     program.addOption(new Option('--advisor <model>', 'Enable the server-side advisor tool with the specified model (alias or full ID).').hideHelp());
   }

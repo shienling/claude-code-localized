@@ -3,17 +3,23 @@ import { constants as fsConstants } from 'fs'
 import os from 'os'
 import { basename, dirname, isAbsolute, join, resolve } from 'path'
 import { registerBundledSkill } from '../bundledSkills.js'
+import { getCwd } from '../../utils/cwd.js'
 import {
   buildFinalCloseoutTemplateBlock,
   containsPlaceholder,
   ensureExecutionStatusSection,
   getAcceptanceGuideBlock,
   getExecutionStatusGuideBlock,
-  getProposalGuideBlock,
+  getProposalTemplateBlock,
+  getReviewTemplateBlock,
+  getReviewGuideBlock,
+  getBackendQuestionBankBlock,
+  getSecurityQuestionBankBlock,
   isAcceptanceComplete,
   isAcceptanceInProgress,
   isProposalComplete,
   isStandardArtifactComplete,
+  isReviewComplete,
   normalizeBeaconWorkspaceDocs,
   readClarificationGateMarker,
   readExecutionStatusMarker,
@@ -39,6 +45,13 @@ export type BeaconSessionState = {
   proposalPath: string
   designPath: string
   tasksPath: string
+  reviewArchitecturePath: string
+  reviewBackendAuditPath: string
+  reviewRiskRegisterPath: string
+  reviewBackendQuestionBankPath: string
+  reviewSecurityThreatModelPath: string
+  reviewSecurityAuditPath: string
+  reviewSecurityQuestionBankPath: string
   frontendProposalPath: string
   backendProposalPath: string
   qaProposalPath: string
@@ -74,6 +87,13 @@ type BeaconWorkspace =
       proposalPath: string
       designPath: string
       tasksPath: string
+      reviewArchitecturePath: string
+      reviewBackendAuditPath: string
+      reviewRiskRegisterPath: string
+      reviewBackendQuestionBankPath: string
+      reviewSecurityThreatModelPath: string
+      reviewSecurityAuditPath: string
+      reviewSecurityQuestionBankPath: string
       frontendProposalPath: string
       backendProposalPath: string
       qaProposalPath: string
@@ -88,6 +108,13 @@ type BeaconWorkspace =
       proposalPath: string
       designPath: string
       tasksPath: string
+      reviewArchitecturePath: string
+      reviewBackendAuditPath: string
+      reviewRiskRegisterPath: string
+      reviewBackendQuestionBankPath: string
+      reviewSecurityThreatModelPath: string
+      reviewSecurityAuditPath: string
+      reviewSecurityQuestionBankPath: string
       frontendProposalPath: string
       backendProposalPath: string
       qaProposalPath: string
@@ -105,7 +132,16 @@ export const BEACON_EXPLICIT_APPROVAL_PHRASES = [
 const BEACON_REOPEN_PATTERN =
   /(继续修改|继续优化|继续补充|补充需求|新增需求|新增功能|需要调整|再改|返工|重做|reopen|follow-up|more work|need changes)/i
 
-type BeaconRole = 'pm/planner' | 'frontend' | 'backend' | 'qa'
+type BeaconRole =
+  | 'pm/planner'
+  | 'architecture-reviewer'
+  | 'backend-auditor'
+  | 'security-threat-modeler'
+  | 'security-auditor'
+  | 'senior-reviewer'
+  | 'frontend'
+  | 'backend'
+  | 'qa'
 
 type BeaconTaskTemplate = {
   role: BeaconRole
@@ -116,6 +152,7 @@ type BeaconTaskTemplate = {
     path: string
     marker:
       | 'coordination_brief'
+      | 'review_status'
       | 'frontend_handoff'
       | 'backend_handoff'
       | 'qa_status'
@@ -148,6 +185,8 @@ type BeaconWorkspaceProgress = {
   clarificationReady: boolean
   standardArtifactsReady: boolean
   proposalsReady: boolean
+  reviewReady: boolean
+  securityReady: boolean
   coordinationReady: boolean
   frontendReady: boolean
   backendReady: boolean
@@ -189,17 +228,184 @@ function getBeaconTaskTemplates(
       ],
     },
     {
+      role: 'architecture-reviewer',
+      filesToRead: [
+        state.overviewPath,
+        state.proposalPath,
+        state.designPath,
+        state.tasksPath,
+        state.reviewArchitecturePath,
+        state.reviewRiskRegisterPath,
+        state.frontendProposalPath,
+        state.backendProposalPath,
+        state.qaProposalPath,
+      ],
+      responsibilities: [
+        'audit the proposed solution for feasibility, hidden coupling, and missed edge cases',
+        'audit the architecture, scope boundaries, and data-flow shape',
+        'write the architecture review and surface blockers before approval',
+        'keep the architecture review aligned with the latest clarified scope',
+      ],
+      deliverables: [
+        'an architecture review',
+        'architecture-specific blocker / warning / note findings',
+        'open questions that still need backend or PM follow-up',
+      ],
+      constraints: [
+        'Review the proposal; do not quietly rewrite the product scope.',
+        'Escalate blockers explicitly so the user can decide before implementation starts.',
+      ],
+    },
+    {
+      role: 'backend-auditor',
+      filesToRead: [
+        state.overviewPath,
+        state.proposalPath,
+        state.designPath,
+        state.tasksPath,
+        state.reviewBackendAuditPath,
+        state.reviewBackendQuestionBankPath,
+        state.reviewRiskRegisterPath,
+        state.backendProposalPath,
+        state.qaProposalPath,
+      ],
+      responsibilities: [
+        'audit the backend stack choice for compatibility, runtime, and dependency risks',
+        'pressure-test counters, idempotency, concurrency, cache/queue usage, migration, recovery, and observability',
+        'write the backend audit and expand backend-specific risk notes when assumptions are weak',
+        'use the backend question bank whenever a backend path looks fragile or underspecified',
+      ],
+      deliverables: [
+        'a backend audit',
+        'backend-specific risk findings and question-bank pressure tests',
+        'any follow-up questions needed before the senior reviewer can finalize the verdict',
+      ],
+      constraints: [
+        'Do not approve the change on behalf of the senior reviewer.',
+        'Call out attack surface, performance traps, and runtime assumptions explicitly.',
+      ],
+    },
+    {
+      role: 'security-threat-modeler',
+      filesToRead: [
+        state.overviewPath,
+        state.proposalPath,
+        state.designPath,
+        state.tasksPath,
+        state.reviewSecurityThreatModelPath,
+        state.reviewSecurityQuestionBankPath,
+        state.reviewRiskRegisterPath,
+        state.frontendProposalPath,
+        state.backendProposalPath,
+        state.qaProposalPath,
+      ],
+      responsibilities: [
+        'model the threat surface from an attacker-first point of view',
+        'document assets, trust boundaries, entry points, abuse cases, and mitigations',
+        'call out security assumptions that look unsafe, vague, or untested',
+        'use the security question bank to pressure-test login, session, and abuse resistance flows',
+      ],
+      deliverables: [
+        'a security threat model',
+        'attack surface / abuse-case findings',
+        'security follow-up questions for the auditor or senior reviewer',
+      ],
+      constraints: [
+        'Think like a malicious user or automated attacker, not a normal user.',
+        'Do not approve the change; only map and explain the threat surface.',
+      ],
+    },
+    {
+      role: 'security-auditor',
+      filesToRead: [
+        state.overviewPath,
+        state.proposalPath,
+        state.designPath,
+        state.tasksPath,
+        state.reviewSecurityThreatModelPath,
+        state.reviewSecurityAuditPath,
+        state.reviewSecurityQuestionBankPath,
+        state.reviewRiskRegisterPath,
+        state.frontendProposalPath,
+        state.backendProposalPath,
+        state.qaProposalPath,
+      ],
+      responsibilities: [
+        'audit authentication, authorization, session handling, and abuse resistance',
+        'verify frontend trust assumptions, logging hygiene, and secret handling',
+        'pressure-test brute force, enumeration, replay, tampering, and rate limiting',
+        'write the security audit and surface blockers or weak mitigations explicitly',
+      ],
+      deliverables: [
+        'a security audit',
+        'security blocker / warning / note findings',
+        'any extra mitigations needed before approval',
+      ],
+      constraints: [
+        'Do not approve the change on behalf of the senior reviewer.',
+        'Treat the browser as hostile and the server as the final authority.',
+      ],
+    },
+    {
+      role: 'senior-reviewer',
+      filesToRead: [
+        state.overviewPath,
+        state.proposalPath,
+        state.designPath,
+        state.tasksPath,
+        state.reviewArchitecturePath,
+        state.reviewBackendAuditPath,
+        state.reviewSecurityThreatModelPath,
+        state.reviewSecurityAuditPath,
+        state.reviewSecurityQuestionBankPath,
+        state.reviewRiskRegisterPath,
+        state.reviewBackendQuestionBankPath,
+        state.frontendProposalPath,
+        state.backendProposalPath,
+        state.qaProposalPath,
+      ],
+      responsibilities: [
+        'synthesize the architecture review, backend audit, and security findings into a final go/no-go verdict',
+        'write a prioritized risk register with blocker / warning / note callouts',
+        'make the review docs internally consistent before approval',
+        'set the review gate only after the review findings are complete',
+      ],
+      deliverables: [
+        'a consolidated review verdict',
+        'a risk register with blocker / warning / note callouts',
+        'the final go/no-go recommendation for the change',
+      ],
+      executionStatusUpdate: {
+        path: state.overviewPath,
+        marker: 'review_status',
+        value: 'completed',
+        when: 'after the consolidated review verdict and risk register are finalized',
+      },
+      constraints: [
+        'Do not erase specialist findings; synthesize them.',
+        'Escalate blockers explicitly so the user can decide before implementation starts.',
+      ],
+    },
+    {
       role: 'frontend',
       filesToRead: [
         state.overviewPath,
         state.designPath,
         state.tasksPath,
+        state.reviewArchitecturePath,
+        state.reviewBackendAuditPath,
+        state.reviewSecurityThreatModelPath,
+        state.reviewSecurityAuditPath,
+        state.reviewSecurityQuestionBankPath,
+        state.reviewRiskRegisterPath,
+        state.reviewBackendQuestionBankPath,
         state.frontendProposalPath,
         state.backendProposalPath,
       ],
       responsibilities: [
         'implement the approved UI and client behavior',
         'wire any frontend contract changes needed for the approved backend shape',
+        'keep the UI resilient against tampering, redirect abuse, and client-trust assumptions',
         'update frontend-facing notes if the implementation reveals necessary specifics',
         'run relevant frontend tests or checks when possible',
       ],
@@ -221,12 +427,20 @@ function getBeaconTaskTemplates(
         state.overviewPath,
         state.designPath,
         state.tasksPath,
+        state.reviewArchitecturePath,
+        state.reviewBackendAuditPath,
+        state.reviewSecurityThreatModelPath,
+        state.reviewSecurityAuditPath,
+        state.reviewSecurityQuestionBankPath,
+        state.reviewRiskRegisterPath,
+        state.reviewBackendQuestionBankPath,
         state.backendProposalPath,
         state.qaProposalPath,
       ],
       responsibilities: [
         'implement the approved API, validation, and persistence changes',
         'preserve compatibility expectations documented in the proposal',
+        'treat authentication, authorization, replay, brute force, and tampering as first-class constraints',
         'run relevant backend tests or checks when possible',
       ],
       deliverables: [
@@ -248,6 +462,13 @@ function getBeaconTaskTemplates(
         state.proposalPath,
         state.designPath,
         state.tasksPath,
+        state.reviewArchitecturePath,
+        state.reviewBackendAuditPath,
+        state.reviewSecurityThreatModelPath,
+        state.reviewSecurityAuditPath,
+        state.reviewSecurityQuestionBankPath,
+        state.reviewRiskRegisterPath,
+        state.reviewBackendQuestionBankPath,
         state.frontendProposalPath,
         state.backendProposalPath,
         state.qaProposalPath,
@@ -319,9 +540,16 @@ function getBeaconExecutionPlan(): BeaconExecutionPlan {
     stages: [
       {
         name: 'coordination',
-        mode: 'serial',
-        roles: ['pm/planner'],
-        goal: 'Confirm scope, dependency order, and the execution brief before coding starts.',
+        mode: 'parallel',
+        roles: [
+          'pm/planner',
+          'architecture-reviewer',
+          'backend-auditor',
+          'security-threat-modeler',
+          'security-auditor',
+          'senior-reviewer',
+        ],
+        goal: 'Confirm scope, dependency order, and the execution brief while specialist reviewers audit architecture, backend, and security risks before coding starts, then let the senior reviewer synthesize the verdict.',
       },
       {
         name: 'implementation',
@@ -368,6 +596,41 @@ function getBeaconOrchestrationSteps(): BeaconOrchestrationStep[] {
         'establish task order, flag proposal mismatches, and confirm what frontend/backend can do in parallel',
     },
     {
+      role: 'architecture-reviewer',
+      stageName: 'coordination',
+      waitFor: 'the architecture review findings',
+      purpose:
+        'audit the proposed architecture for feasibility, hidden coupling, and scope boundary risks before approval',
+    },
+    {
+      role: 'backend-auditor',
+      stageName: 'coordination',
+      waitFor: 'the backend audit and backend question-bank pressure test',
+      purpose:
+        'audit the backend stack, data contract, and runtime behavior for compatibility, security, and recovery risks before approval',
+    },
+    {
+      role: 'security-threat-modeler',
+      stageName: 'coordination',
+      waitFor: 'the security threat model and attack-surface map',
+      purpose:
+        'map the attacker-first threat surface, trust boundaries, and abuse cases before approval',
+    },
+    {
+      role: 'security-auditor',
+      stageName: 'coordination',
+      waitFor: 'the security audit and abuse-resistance verdict',
+      purpose:
+        'audit authentication, authorization, session handling, tampering resistance, and abuse controls before approval',
+    },
+    {
+      role: 'senior-reviewer',
+      stageName: 'coordination',
+      waitFor: 'the architecture review, backend audit, security audit, and risk register',
+      purpose:
+        'synthesize specialist findings into a final blocker / warning / note verdict before approval',
+    },
+    {
       role: 'frontend',
       stageName: 'implementation',
       waitFor: 'frontend implementation summary, changed files, and checks run',
@@ -407,6 +670,8 @@ ${lines.join('\n\n')}
 
 Main-thread rules:
 - run pm/planner first
+- launch architecture-reviewer, backend-auditor, security-threat-modeler, and security-auditor in the same coordination window so specialist audits happen in parallel with planning
+- launch senior-reviewer after the specialist findings are ready so the verdict is synthesized explicitly
 - after pm/planner returns, launch frontend and backend as the default parallel pair in the same turn unless the execution brief explicitly says one blocks the other
 - do not serialize frontend and backend by default; serial execution requires an explicit dependency reason grounded in the approved proposal set
 - wait for both frontend and backend results before launching qa
@@ -419,6 +684,13 @@ function buildBeaconFileReferenceBlock(state: BeaconSessionState): string {
 - Change proposal: \`${state.proposalPath}\`
 - Technical design: \`${state.designPath}\`
 - Task breakdown: \`${state.tasksPath}\`
+- Architecture review: \`${state.reviewArchitecturePath}\`
+- Backend audit: \`${state.reviewBackendAuditPath}\`
+- Security threat model: \`${state.reviewSecurityThreatModelPath}\`
+- Security audit: \`${state.reviewSecurityAuditPath}\`
+- Risk register: \`${state.reviewRiskRegisterPath}\`
+- Backend question bank: \`${state.reviewBackendQuestionBankPath}\`
+- Security question bank: \`${state.reviewSecurityQuestionBankPath}\`
 - Frontend proposal: \`${state.frontendProposalPath}\`
 - Backend proposal: \`${state.backendProposalPath}\`
 - QA proposal: \`${state.qaProposalPath}\`
@@ -435,6 +707,49 @@ function buildBeaconTaskPromptTemplates(state: BeaconSessionState): string {
 Use these as the default shape when delegating with the Task tool.
 
 ${sections.join('\n\n')}`
+}
+
+function buildBeaconReviewTrackPrompt(state: BeaconSessionState): string {
+  const architectureReviewer = getBeaconTaskTemplates(state).find(
+    t => t.role === 'architecture-reviewer',
+  )!
+  const backendAuditor = getBeaconTaskTemplates(state).find(
+    t => t.role === 'backend-auditor',
+  )!
+  const securityThreatModeler = getBeaconTaskTemplates(state).find(
+    t => t.role === 'security-threat-modeler',
+  )!
+  const securityAuditor = getBeaconTaskTemplates(state).find(
+    t => t.role === 'security-auditor',
+  )!
+  const seniorReviewer = getBeaconTaskTemplates(state).find(
+    t => t.role === 'senior-reviewer',
+  )!
+
+  return `## Beacon Review Track
+
+Use this parallel audit track to catch architecture, backend, and security problems before approval:
+
+- architecture reviewer: audit the architecture fit, implementation feasibility, and hidden coupling
+- backend auditor: audit the backend/data contract shape, dependency plan, runtime compatibility, and question-bank pressure tests
+- security threat modeler: map the attacker-first threat surface, trust boundaries, and abuse cases
+- security auditor: audit authentication, authorization, session handling, tampering resistance, and abuse controls
+- senior reviewer: synthesize the specialist findings, write the risk register, and decide the final blocker / warning / note verdict
+- reuse the backend question bank when a backend proposal is vague, risky, or likely to rely on hidden assumptions
+- reuse the security question bank when a flow touches login, session, identity, secrets, redirects, rate limits, or hostile client behavior
+- update \`${state.reviewArchitecturePath}\`, \`${state.reviewBackendAuditPath}\`, and \`${state.reviewRiskRegisterPath}\`
+- update \`${state.reviewSecurityThreatModelPath}\`, \`${state.reviewSecurityAuditPath}\`, and \`${state.reviewSecurityQuestionBankPath}\`
+- keep \`review_status\` and \`security_status\` in \`${state.overviewPath}\` moving from \`pending\` to \`in_progress\` and then \`completed\` as the audit progresses
+
+${formatBeaconTaskTemplate(state, architectureReviewer)}
+
+${formatBeaconTaskTemplate(state, backendAuditor)}
+
+${formatBeaconTaskTemplate(state, securityThreatModeler)}
+
+${formatBeaconTaskTemplate(state, securityAuditor)}
+
+${formatBeaconTaskTemplate(state, seniorReviewer)}`
 }
 
 function buildSuperpowersDisciplineBlock(
@@ -489,11 +804,20 @@ function buildExecutionStatusHelper(
   stage: BeaconExecutionState,
 ): string {
   const lines =
-    stage === 'clarifying' || stage === 'awaiting_approval'
+    stage === 'clarifying'
       ? [
           '- Keep all execution markers pending while Beacon is still clarifying scope.',
+          '- Keep `review_status` pending until the review track has actually audited the architecture and backend stack.',
+          '- Keep `security_status` pending until the security track has actually modeled threats and audited abuse resistance.',
           '- Do not mark implementation progress in overview.md before explicit approval.',
         ]
+      : stage === 'awaiting_approval'
+        ? [
+            '- Keep `coordination_brief`, `frontend_handoff`, `backend_handoff`, and `qa_status` pending until development starts.',
+            '- Keep `review_status: completed` as the review gate that already ran before approval.',
+            '- Keep `security_status: completed` as the security gate that already ran before approval.',
+            '- Do not mark implementation progress in overview.md before explicit approval.',
+          ]
       : stage === 'coordinating'
         ? [
             `- In \`${state.overviewPath}\`, keep \`coordination_brief: pending\` until pm/planner finalizes the execution brief.`,
@@ -501,11 +825,13 @@ function buildExecutionStatusHelper(
             '- Leave `frontend_handoff`, `backend_handoff`, and `qa_status` unchanged until later stages.',
           ]
         : stage === 'implementing'
-          ? [
-              `- In \`${state.overviewPath}\`, preserve \`coordination_brief: ready\` from the coordination stage.`,
-              '- Set `frontend_handoff: ready` only when the frontend handoff is actually ready.',
-              '- Set `backend_handoff: ready` only when the backend handoff is actually ready.',
-              '- Keep `qa_status: pending` until QA starts verification.',
+        ? [
+            `- In \`${state.overviewPath}\`, preserve \`coordination_brief: ready\` from the coordination stage.`,
+            '- Keep `review_status: completed` in place as the pre-implementation audit gate; if the review track reveals new blockers, return to clarification instead of forcing implementation.',
+            '- Keep `security_status: completed` in place as the security audit gate; if the security track reveals new blockers, return to clarification instead of forcing implementation.',
+            '- Set `frontend_handoff: ready` only when the frontend handoff is actually ready.',
+            '- Set `backend_handoff: ready` only when the backend handoff is actually ready.',
+            '- Keep `qa_status: pending` until QA starts verification.',
             ]
           : stage === 'verifying'
             ? [
@@ -534,12 +860,15 @@ Required behavior:
 - continue Superpowers-style brainstorming
 - proactively clarify ambiguity with at least one round of follow-up questions before asking to start development, unless the user explicitly says the requirement is already complete and no more clarification is needed
 - keep the proposal files updated as understanding improves
+- keep the review docs updated in parallel so the architecture review, backend audit, security threat model, and security audit are available before approval
 - keep \`clarification_gate: pending\` in \`${state.overviewPath}\` until those follow-up questions have been asked and resolved, or the user explicitly waives more clarification
 - only set \`clarification_gate: ready\` after the proposals and overview reflect the clarified answers
 - do NOT start implementation yet unless the user gives an explicit confirmation phrase
 - accepted confirmation phrases are: ${BEACON_EXPLICIT_APPROVAL_PHRASES.map(phrase => `"${phrase}"`).join(', ')}
 
 ${buildSuperpowersDisciplineBlock('clarifying', state)}
+
+${buildBeaconReviewTrackPrompt(state)}
 
 ${buildExecutionStatusHelper(state, 'clarifying')}`
 }
@@ -551,12 +880,15 @@ ${buildBeaconFileReferenceBlock(state)}
 
 Required behavior:
 - summarize the clarified scope and technical approach
-- point the user to the proposal files
+- summarize the review verdict, backend audit, security audit, and any blockers or warnings that should be visible to the user
+- point the user to the proposal files and security docs
 - ask whether to start development
 - preserve \`clarification_gate: ready\` in \`${state.overviewPath}\` unless the user introduces new ambiguity or follow-up work
 - do NOT implement anything until the user gives an explicit confirmation phrase
 
 ${buildSuperpowersDisciplineBlock('awaiting_approval', state)}
+
+${buildBeaconReviewTrackPrompt(state)}
 
 ${buildExecutionStatusHelper(state, 'awaiting_approval')}`
 }
@@ -639,7 +971,10 @@ Required behavior:
 - focus on QA verification and acceptance closeout
 - keep \`${state.overviewPath}\` aligned with \`qa_status: in_progress\` during verification and \`qa_status: completed\` once the final acceptance closeout is done
 - update \`${state.qaAcceptancePath}\`
+- build and execute a test matrix that covers happy paths, negative paths, regression risks, and security/abuse checks when applicable
 - run relevant tests/checks when possible
+- compare observed behavior against the approved proposal set, not just the implementation summary
+- escalate any mismatch immediately instead of smoothing it over in the final closeout
 - final output must follow the required acceptance structure exactly
 
 ${buildSuperpowersDisciplineBlock('verifying', state)}
@@ -756,6 +1091,25 @@ function getPathsForChange(changeRoot: string, changeId: string) {
     proposalPath: join(changeRoot, 'proposal.md'),
     designPath: join(changeRoot, 'design.md'),
     tasksPath: join(changeRoot, 'tasks.md'),
+    reviewArchitecturePath: join(changeRoot, 'review', 'architecture-review.md'),
+    reviewBackendAuditPath: join(changeRoot, 'review', 'backend-audit.md'),
+    reviewRiskRegisterPath: join(changeRoot, 'review', 'risk-register.md'),
+    reviewBackendQuestionBankPath: join(
+      changeRoot,
+      'review',
+      'backend-question-bank.md',
+    ),
+    reviewSecurityThreatModelPath: join(
+      changeRoot,
+      'review',
+      'security-threat-model.md',
+    ),
+    reviewSecurityAuditPath: join(changeRoot, 'review', 'security-audit.md'),
+    reviewSecurityQuestionBankPath: join(
+      changeRoot,
+      'review',
+      'security-question-bank.md',
+    ),
     frontendProposalPath: join(changeRoot, 'frontend', 'proposal.md'),
     backendProposalPath: join(changeRoot, 'backend', 'proposal.md'),
     qaProposalPath: join(changeRoot, 'qa', 'proposal.md'),
@@ -828,6 +1182,20 @@ async function readChangeRoot(candidate: string): Promise<string | null> {
     return resolve(candidate, '..')
   }
 
+  if (
+    basename(candidate) === 'architecture-review.md' ||
+    basename(candidate) === 'backend-audit.md' ||
+    basename(candidate) === 'security-threat-model.md' ||
+    basename(candidate) === 'security-audit.md' ||
+    basename(candidate) === 'tech-solution-review.md' ||
+    basename(candidate) === 'stack-audit.md' ||
+    basename(candidate) === 'risk-register.md' ||
+    basename(candidate) === 'backend-question-bank.md' ||
+    basename(candidate) === 'security-question-bank.md'
+  ) {
+    return resolve(candidate, '..', '..')
+  }
+
   if (basename(candidate) === 'acceptance.md') {
     return resolve(candidate, '..', '..')
   }
@@ -842,10 +1210,11 @@ async function ensureWorkspaceFiles(
   await mkdir(join(workspace.targetPath, 'frontend'), { recursive: true })
   await mkdir(join(workspace.targetPath, 'backend'), { recursive: true })
   await mkdir(join(workspace.targetPath, 'qa'), { recursive: true })
+  await mkdir(join(workspace.targetPath, 'review'), { recursive: true })
 
   await scaffoldFile(
     workspace.overviewPath,
-    `# Beacon Overview\n\n## Change\n${title}\n\n## Status\n- phase: brainstorming\n- stage: clarifying\n- development_approved: no\n- clarification_gate: pending\n\n## Execution Status\n- coordination_brief: pending\n- frontend_handoff: pending\n- backend_handoff: pending\n- qa_status: pending\n\n${getExecutionStatusGuideBlock()}## User Request\n${title}\n\n## Scope Summary\n- Pending clarification\n\n## Approval\n- Waiting for explicit user confirmation phrase before implementation starts.\n`,
+    `# Beacon Overview\n\n## Change\n${title}\n\n## Status\n- phase: brainstorming\n- stage: clarifying\n- development_approved: no\n- clarification_gate: pending\n\n## Execution Status\n- coordination_brief: pending\n- review_status: pending\n- security_status: pending\n- frontend_handoff: pending\n- backend_handoff: pending\n- qa_status: pending\n\n${getExecutionStatusGuideBlock()}## User Request\n${title}\n\n## Scope Summary\n- Pending clarification\n\n## Approval\n- Waiting for explicit user confirmation phrase before implementation starts.\n`,
   )
   await scaffoldFile(
     workspace.proposalPath,
@@ -860,16 +1229,44 @@ async function ensureWorkspaceFiles(
     `# Implementation Tasks\n\n## Coordination\n- [ ] Pending clarification\n\n## Frontend\n- [ ] Pending clarification\n\n## Backend\n- [ ] Pending clarification\n\n## QA\n- [ ] Pending clarification\n`,
   )
   await scaffoldFile(
+    workspace.reviewArchitecturePath,
+    getReviewTemplateBlock('architecture-review'),
+  )
+  await scaffoldFile(
+    workspace.reviewBackendAuditPath,
+    getReviewTemplateBlock('backend-audit'),
+  )
+  await scaffoldFile(
+    workspace.reviewSecurityThreatModelPath,
+    getReviewTemplateBlock('security-threat-model'),
+  )
+  await scaffoldFile(
+    workspace.reviewSecurityAuditPath,
+    getReviewTemplateBlock('security-audit'),
+  )
+  await scaffoldFile(
+    workspace.reviewRiskRegisterPath,
+    `# Risk Register\n\n## Executive Summary\nPending clarification\n\n## Findings\n- TBD\n\n## Decision\n- TBD\n\n## Follow-ups\n- TBD\n\n${getReviewGuideBlock('risk-register')}`,
+  )
+  await scaffoldFile(
+    workspace.reviewBackendQuestionBankPath,
+    `# Backend Question Bank\n\n${getBackendQuestionBankBlock()}\n`,
+  )
+  await scaffoldFile(
+    workspace.reviewSecurityQuestionBankPath,
+    `# Security Question Bank\n\n${getSecurityQuestionBankBlock()}\n`,
+  )
+  await scaffoldFile(
     workspace.frontendProposalPath,
-    `# Frontend Proposal\n\n## Objective\nPending clarification\n\n## UI Changes\n- TBD\n\n## Validation Rules\n- TBD\n\n## API Dependencies\n- TBD\n\n## Acceptance Notes\n- TBD\n\n${getProposalGuideBlock('frontend')}`,
+    getProposalTemplateBlock('frontend'),
   )
   await scaffoldFile(
     workspace.backendProposalPath,
-    `# Backend Proposal\n\n## Objective\nPending clarification\n\n## API Changes\n- TBD\n\n## Data Model / Persistence\n- TBD\n\n## Compatibility Notes\n- TBD\n\n## Acceptance Notes\n- TBD\n\n${getProposalGuideBlock('backend')}`,
+    getProposalTemplateBlock('backend'),
   )
   await scaffoldFile(
     workspace.qaProposalPath,
-    `# QA Proposal\n\n## Objective\nPending clarification\n\n## Test Coverage\n- TBD\n\n## Regression Risks\n- TBD\n\n## Acceptance Checklist\n- TBD\n\n${getProposalGuideBlock('qa')}`,
+    getProposalTemplateBlock('qa'),
   )
   await scaffoldFile(
     workspace.qaAcceptancePath,
@@ -965,6 +1362,36 @@ export async function prepareBeaconSessionState(
 ): Promise<BeaconSessionState> {
   const workspace = await scaffoldWorkspace(args, cwd, fallbackProjectRoot)
   const docs = await normalizeBeaconWorkspaceDocs(workspace)
+  const reviewReady =
+    isReviewComplete(docs.reviewArchitecture, 'architecture-review') &&
+    isReviewComplete(docs.reviewBackendAudit, 'backend-audit') &&
+    isReviewComplete(docs.reviewRiskRegister, 'risk-register')
+  const securityReady =
+    isReviewComplete(docs.reviewSecurityThreatModel, 'security-threat-model') &&
+    isReviewComplete(docs.reviewSecurityAudit, 'security-audit') &&
+    !containsPlaceholder(docs.reviewSecurityQuestionBank, ['TBD', 'Pending clarification'])
+
+  if (
+    reviewReady &&
+    securityReady &&
+    readExecutionStatusMarker(docs.overview, 'review_status') !== 'completed'
+  ) {
+    const reviewedOverview = updateExecutionStatusMarker(
+      docs.overview,
+      'review_status',
+      'completed',
+    )
+    await writeFile(workspace.overviewPath, reviewedOverview, 'utf8')
+  }
+
+  if (securityReady && readExecutionStatusMarker(docs.overview, 'security_status') !== 'completed') {
+    const securedOverview = updateExecutionStatusMarker(
+      docs.overview,
+      'security_status',
+      'completed',
+    )
+    await writeFile(workspace.overviewPath, securedOverview, 'utf8')
+  }
 
   return {
     active: true,
@@ -975,6 +1402,13 @@ export async function prepareBeaconSessionState(
     proposalPath: workspace.proposalPath,
     designPath: workspace.designPath,
     tasksPath: workspace.tasksPath,
+    reviewArchitecturePath: workspace.reviewArchitecturePath,
+    reviewBackendAuditPath: workspace.reviewBackendAuditPath,
+    reviewRiskRegisterPath: workspace.reviewRiskRegisterPath,
+    reviewBackendQuestionBankPath: workspace.reviewBackendQuestionBankPath,
+    reviewSecurityThreatModelPath: workspace.reviewSecurityThreatModelPath,
+    reviewSecurityAuditPath: workspace.reviewSecurityAuditPath,
+    reviewSecurityQuestionBankPath: workspace.reviewSecurityQuestionBankPath,
     frontendProposalPath: workspace.frontendProposalPath,
     backendProposalPath: workspace.backendProposalPath,
     qaProposalPath: workspace.qaProposalPath,
@@ -1026,33 +1460,6 @@ export function advanceBeaconStage(
     }
   }
 
-  if (state.stage === 'coordinating' && trimmed.length > 0) {
-    return {
-      ...state,
-      stage: 'implementing',
-    }
-  }
-
-  if (
-    state.stage === 'implementing' &&
-    /(qa|test|tests|verify|verification|验收|测试|联调)/i.test(trimmed)
-  ) {
-    return {
-      ...state,
-      stage: 'verifying',
-    }
-  }
-
-  if (
-    state.stage === 'verifying' &&
-    /(完成|结束|done|complete|completed|验收通过)/i.test(trimmed)
-  ) {
-    return {
-      ...state,
-      stage: 'completed',
-    }
-  }
-
   return state
 }
 
@@ -1064,6 +1471,12 @@ async function getBeaconWorkspaceProgress(
   const proposal = docs.proposal
   const design = docs.design
   const tasks = docs.tasks
+  const reviewArchitecture = docs.reviewArchitecture
+  const reviewBackendAudit = docs.reviewBackendAudit
+  const reviewRiskRegister = docs.reviewRiskRegister
+  const reviewSecurityThreatModel = docs.reviewSecurityThreatModel
+  const reviewSecurityAudit = docs.reviewSecurityAudit
+  const reviewSecurityQuestionBank = docs.reviewSecurityQuestionBank
   const frontend = docs.frontendProposal
   const backend = docs.backendProposal
   const qa = docs.qaProposal
@@ -1071,7 +1484,9 @@ async function getBeaconWorkspaceProgress(
 
   const proposalsReady =
     !containsPlaceholder(overview, ['Pending clarification']) &&
-    [frontend, backend, qa].every(isProposalComplete)
+    isProposalComplete(frontend, 'frontend') &&
+    isProposalComplete(backend, 'backend') &&
+    isProposalComplete(qa, 'qa')
   const standardArtifactsReady =
     isStandardArtifactComplete(proposal, [
       'Summary',
@@ -1092,6 +1507,14 @@ async function getBeaconWorkspaceProgress(
       'Backend',
       'QA',
     ])
+  const reviewReady =
+    isReviewComplete(reviewArchitecture, 'architecture-review') &&
+    isReviewComplete(reviewBackendAudit, 'backend-audit') &&
+    isReviewComplete(reviewRiskRegister, 'risk-register')
+  const securityReady =
+    isReviewComplete(reviewSecurityThreatModel, 'security-threat-model') &&
+    isReviewComplete(reviewSecurityAudit, 'security-audit') &&
+    !containsPlaceholder(reviewSecurityQuestionBank, ['TBD', 'Pending clarification'])
   const clarificationReady = readClarificationGateMarker(overview) === 'ready'
   const coordinationReady = readExecutionStatusMarker(overview, 'coordination_brief') === 'ready'
   const frontendReady = readExecutionStatusMarker(overview, 'frontend_handoff') === 'ready'
@@ -1102,6 +1525,8 @@ async function getBeaconWorkspaceProgress(
     clarificationReady,
     standardArtifactsReady,
     proposalsReady,
+    reviewReady,
+    securityReady,
     coordinationReady,
     frontendReady,
     backendReady,
@@ -1128,6 +1553,8 @@ export async function advanceBeaconStageFromWorkspace(
       stage:
         progress.standardArtifactsReady &&
         progress.proposalsReady &&
+        progress.reviewReady &&
+        progress.securityReady &&
         progress.clarificationReady
           ? 'awaiting_approval'
           : 'clarifying',
@@ -1173,19 +1600,19 @@ export function buildBeaconStageTransitionFeedback(
 
   switch (nextState.stage) {
     case 'awaiting_approval':
-      return `Beacon 已进入“${nextLabel}”阶段。需求和 proposal 已基本补齐，接下来会先给用户做最终确认。`
+      return `Beacon 已进入“${nextLabel}”阶段。需求、方案、审查和安全文档已基本补齐，接下来会先给用户做最终确认。`
     case 'coordinating':
-      return `Beacon 已进入“${nextLabel}”阶段。用户已明确同意开始开发，接下来先由 pm/planner 协调任务。`
+      return `Beacon 已进入“${nextLabel}”阶段。用户已明确同意开始开发，接下来先由 pm/planner 协调任务并保持审查结论一致。`
     case 'implementing':
-      return `Beacon 已进入“${nextLabel}”阶段。现在可以推进 frontend / backend 的实现与交接。`
+      return `Beacon 已进入“${nextLabel}”阶段。现在可以推进 frontend / backend 的实现与交接，并保留安全约束。`
     case 'verifying':
-      return `Beacon 已进入“${nextLabel}”阶段。前后端实现已基本就绪，接下来由 QA 做验收收口。`
+      return `Beacon 已进入“${nextLabel}”阶段。前后端实现已基本就绪，接下来由 QA 做验收收口并复核安全风险。`
     case 'completed':
       return `Beacon 已进入“${nextLabel}”阶段。当前 change 已完成验收收口，可以输出最终总结。`
     case 'clarifying':
       return previousState.stage === 'completed'
-        ? `Beacon 已重新回到“${nextLabel}”阶段。检测到用户追加了新改动，请先补全需求再继续。`
-        : `Beacon 已进入“${nextLabel}”阶段。请继续补全需求和方案细节。`
+        ? `Beacon 已重新回到“${nextLabel}”阶段。检测到用户追加了新改动，请先补全需求、方案和安全约束再继续。`
+        : `Beacon 已进入“${nextLabel}”阶段。请继续补全需求、方案和安全约束。`
   }
 }
 
@@ -1193,8 +1620,8 @@ export function buildBeaconStartFeedback(
   state: Pick<BeaconSessionState, 'stage'>,
 ): string {
   return state.stage === 'awaiting_approval'
-    ? 'Beacon 已启动，当前需求已经基本补齐，接下来会先向用户做最终确认。'
-    : 'Beacon 已启动，当前先进入“需求补全”阶段，接下来会主动梳理需求并完善 openspec 文档。'
+    ? 'Beacon 已启动，当前需求、审查和安全文档已经基本补齐，接下来会先向用户做最终确认。'
+    : 'Beacon 已启动，当前先进入“需求补全”阶段，接下来会主动梳理需求、风险和安全约束并完善 openspec 文档。'
 }
 
 export function buildBeaconActiveMetaPrompt(
@@ -1239,7 +1666,7 @@ export function registerBeaconSkill(): void {
   registerBundledSkill({
     name: 'beacon',
     description:
-      'Start or continue the Beacon delivery flow: clarify requirements, write openspec proposals, ask for explicit approval, then coordinate frontend/backend/qa implementation.',
+      'Start or continue the Beacon delivery flow: clarify requirements, write openspec proposals, run specialist reviews, ask for explicit approval, then coordinate frontend/backend/qa implementation.',
     argumentHint: '<feature request or openspec markdown path>',
     whenToUse:
       'Use when the user wants to start a strong, guided delivery flow from a feature request or continue from an existing openspec markdown file.',
@@ -1258,14 +1685,32 @@ export function registerBeaconSkill(): void {
     files: {
       'workflow/BEACON_FLOW.md': `# Beacon Flow
 
-Beacon is a four-step delivery loop:
+Beacon is a multi-role delivery loop:
 
 1. Clarify the user's request with proactive follow-up questions.
 2. Keep OpenSpec-style documents updated in the current change directory.
-3. Summarize the final scope and ask for explicit approval to start development.
-4. After approval, coordinate pm/planner, frontend, backend, and qa work.
+3. Run the review track in parallel so architecture, backend, security, and senior-review risks surface before approval.
+4. Summarize the final scope and ask for explicit approval to start development.
+5. After approval, coordinate pm/planner, frontend expert, backend expert, and senior QA work.
 
 Never skip the approval gate.
+`,
+      'workflow/REVIEW_PLAYBOOK.md': `# Beacon Review Playbook
+
+The review track runs in parallel with clarification and planning.
+
+It must:
+- use a senior reviewer to synthesize the final go/no-go verdict
+- let an architecture reviewer audit feasibility, hidden coupling, and scope boundaries
+- let a backend auditor audit compatibility, runtime, dependency, and recovery risks
+- let a security threat modeler map attacker-first abuse cases and trust boundaries
+- let a security auditor verify authentication, authorization, session handling, and abuse resistance
+- write a risk register with blocker / warning / note callouts
+- update the review docs before Beacon asks for approval
+- use the backend question bank whenever the backend path touches counters, caching, idempotency, concurrency, migrations, recovery, or observability
+- use the security question bank whenever a flow touches login, session, identity, secrets, redirects, rate limits, or hostile client behavior
+
+The review track should block approval if it finds a blocker that the user has not explicitly accepted.
 `,
       'workflow/APPROVAL_RULES.md': `# Explicit Approval Rules
 
@@ -1283,7 +1728,7 @@ If the user says anything less explicit, remain in clarification/proposal mode.
 
 When Beacon enters implementation mode:
 
-1. Read overview.md, proposal.md, design.md, tasks.md, frontend/proposal.md, backend/proposal.md, qa/proposal.md.
+1. Read overview.md, proposal.md, design.md, tasks.md, review/architecture-review.md, review/backend-audit.md, review/security-threat-model.md, review/security-audit.md, review/risk-register.md, frontend/proposal.md, backend/proposal.md, qa/proposal.md.
 2. Produce a short implementation plan.
 3. Delegate role-specific work with the Task tool.
 4. Prefer frontend and backend tasks in parallel when dependencies allow.
@@ -1292,13 +1737,19 @@ When Beacon enters implementation mode:
 7. Keep overview.md execution markers aligned with the current stage.
 
 Minimum execution shape:
+- senior-reviewer: synthesize specialist findings, finalize the risk register, and set the review gate
+- architecture-reviewer: audit architecture fit, feasibility, scope boundaries, and hidden coupling
+- backend-auditor: audit backend stack, contracts, runtime behavior, and the question-bank pressure tests
+- security-threat-modeler: map attacker-first abuse cases, trust boundaries, and threat scenarios
+- security-auditor: audit authentication, authorization, session handling, tampering resistance, and abuse controls
 - pm/planner: confirm task order, dependency edges, and what "done" means
-- frontend: implement UI and client-side contract integration
-- backend: implement API/data changes and validation logic
+- frontend: implement UI and client-side contract integration, and keep screen states, validation, error handling, and edge cases aligned with the approved proposal
+- backend: implement API/data changes and validation logic, and validate counters, idempotency, concurrency, cache/queue choices, recovery behavior, and security assumptions against the proposal and question banks
 - qa: verify implemented behavior, run tests, and record verified/unverified areas
 
 Execution markers in overview.md:
 - coordination_brief: pending -> ready
+- review_status: pending -> in_progress -> completed
 - frontend_handoff: pending -> ready
 - backend_handoff: pending -> ready
 - qa_status: pending -> in_progress -> completed
@@ -1320,6 +1771,7 @@ Use this exact section structure in the final closeout:
 - one concise summary of readiness and remaining caveats
 
 Execution status writeback:
+- set review_status: completed after the review verdict is finalized
 - set coordination_brief: ready after PM/planner finalizes the execution brief
 - set frontend_handoff: ready after frontend handoff is ready
 - set backend_handoff: ready after backend handoff is ready
@@ -1329,6 +1781,32 @@ Execution status writeback:
 
 These are the default task shapes Beacon should use in implementation mode.
 
+## architecture-reviewer
+- read overview + proposal + design + tasks + architecture review + risk register + all role proposals
+- audit architecture fit, feasibility, hidden coupling, and scope boundaries
+- write the architecture review and surface blockers / warnings / notes early
+
+## backend-auditor
+- read overview + proposal + design + tasks + backend audit + backend question bank + risk register + backend proposal + qa proposal
+- audit backend stack choice, contract shape, runtime behavior, and recovery risks
+- pressure-test counters, idempotency, concurrency, cache/queue usage, migration, recovery, and observability
+
+## security-threat-modeler
+- read overview + proposal + design + tasks + security threat model + security question bank + risk register + frontend proposal + backend proposal + qa proposal
+- model the threat surface from an attacker-first point of view
+- document assets, trust boundaries, entry points, abuse cases, and mitigations
+
+## security-auditor
+- read overview + proposal + design + tasks + security threat model + security audit + security question bank + risk register + all role proposals
+- audit authentication, authorization, session handling, tampering resistance, and abuse controls
+- pressure-test brute force, enumeration, replay, redirect abuse, CSRF/XSS, and logging/secret handling
+
+## senior-reviewer
+- read overview + proposal + design + tasks + all review docs + all role proposals
+- synthesize specialist findings into a final blocker / warning / note verdict
+- write the prioritized risk register
+- update overview.md and set review_status: completed once the review verdict is finalized
+
 ## pm/planner
 - read overview + proposal + design + tasks + all role proposals
 - confirm dependency order and parallelism
@@ -1336,24 +1814,28 @@ These are the default task shapes Beacon should use in implementation mode.
 - update overview.md and set coordination_brief: ready once the brief is finalized
 
 ## frontend
-- read overview + design + tasks + frontend proposal + backend proposal
+- read overview + design + tasks + frontend proposal + backend proposal + security docs when the flow handles identity or hostile input
 - implement approved UI/client behavior
+- keep the implementation aligned with screen states, validation, empty/loading/error handling, accessibility, tampering resistance, and edge cases spelled out in frontend/proposal.md
 - report changed files and checks run
 - update overview.md and set frontend_handoff: ready once the frontend handoff is ready
 
 ## backend
-- read overview + design + tasks + backend proposal + qa proposal
+- read overview + design + tasks + backend proposal + qa proposal + security docs when the flow handles identity or hostile input
 - implement approved API/data changes
+- pressure-test counters, idempotency, concurrency, cache/queue usage, migration, recovery, observability, and security assumptions against backend/proposal.md and the question banks
 - report changed files and checks run
 - update overview.md and set backend_handoff: ready once the backend handoff is ready
 
 ## qa
-- read overview + proposal + design + tasks + all role proposals + qa/acceptance.md
+- read overview + proposal + design + tasks + all role proposals + qa/acceptance.md + security docs when applicable
 - verify behavior and update acceptance.md
 - return Tests Run / Verified / Unverified / Acceptance Summary
+- build a test matrix and verify abuse cases, negative paths, and security regressions when the feature is attackable
+- make explicit what was not tested and why
 - keep qa_status: in_progress during verification and set qa_status: completed at final closeout
 `,
-      'roles/PM_PLANNER.md': `# PM / Planner Role
+      'roles/PM_PLANNER.md': `# Senior Project Manager / Planner
 
 Responsibilities:
 - turn clarified requirements into an implementation-ready plan
@@ -1361,30 +1843,70 @@ Responsibilities:
 - identify parallelizable work
 - make the proposal set internally consistent before implementation starts
 `,
-      'roles/FRONTEND.md': `# Frontend Role
+      'roles/ARCHITECTURE_REVIEWER.md': `# Architecture Reviewer
+
+Responsibilities:
+- audit the architecture for feasibility and hidden coupling
+- audit scope boundaries, data flow, and hidden coupling
+- maintain the architecture review
+- escalate blockers before approval
+`,
+      'roles/BACKEND_AUDITOR.md': `# Backend Auditor
+
+Responsibilities:
+- audit the backend stack for compatibility, runtime, and dependency risks
+- maintain the backend audit and pressure-test it against the backend question bank
+- escalate blockers before approval
+`,
+      'roles/SECURITY_THREAT_MODELER.md': `# Security Threat Modeler
+
+Responsibilities:
+- model the threat surface from an attacker-first point of view
+- document assets, trust boundaries, entry points, abuse cases, and mitigations
+- keep the security threat model aligned with the latest scope
+`,
+      'roles/SECURITY_AUDITOR.md': `# Security Auditor
+
+Responsibilities:
+- audit authentication, authorization, session handling, tampering resistance, and abuse controls
+- pressure-test brute force, enumeration, replay, redirect abuse, CSRF/XSS, and logging/secret handling
+- maintain the security audit and escalate blockers before approval
+`,
+      'roles/SENIOR_REVIEWER.md': `# Senior Reviewer
+
+Responsibilities:
+- synthesize the architecture review, backend audit, and security findings into a final verdict
+- maintain the risk register
+- escalate blockers before approval
+`,
+      'roles/FRONTEND.md': `# Frontend Expert
 
 Responsibilities:
 - UI fields, form behavior, validation, and user flows
-- mapping backend contract changes into the front-end experience
-- documenting any frontend acceptance points in frontend/proposal.md
+- map backend contract changes into the front-end experience
+- document any frontend acceptance points in frontend/proposal.md
+- spell out screen states, loading/error/empty behavior, accessibility, tampering resistance, and edge cases
 `,
-      'roles/BACKEND.md': `# Backend Role
+      'roles/BACKEND.md': `# Backend Expert
 
 Responsibilities:
 - API and persistence changes
-- data compatibility and validation logic
-- documenting contract updates in backend/proposal.md
+- data compatibility, validation logic, and rollout concerns
+- document contract updates in backend/proposal.md
+- pressure-test counters, idempotency, concurrency, cache/queue usage, observability, and security risks
 `,
-      'roles/QA.md': `# QA Role
+      'roles/QA.md': `# Senior QA
 
 Responsibilities:
 - define test scope and acceptance checks
 - verify implemented behavior against the approved proposals
+- verify negative paths, abuse cases, and security regressions when applicable
+- confirm the final closeout evidence is complete
 - report both verified and unverified areas before completion
 `,
     },
     async getPromptForCommand(args, context) {
-      const cwd = process.cwd()
+      const cwd = getCwd()
       const fallbackProjectRoot =
         context?.getAppState?.().beacon?.projectRoot
       const workspace = await scaffoldWorkspace(args, cwd, fallbackProjectRoot)
@@ -1414,6 +1936,10 @@ Beacon is the ONLY user-facing entrypoint for this flow. The user should not be 
 - Proposal: \`${workspace.proposalPath}\`
 - Design: \`${workspace.designPath}\`
 - Tasks: \`${workspace.tasksPath}\`
+- Architecture review: \`${workspace.reviewArchitecturePath}\`
+- Backend audit: \`${workspace.reviewBackendAuditPath}\`
+- Risk register: \`${workspace.reviewRiskRegisterPath}\`
+- Backend question bank: \`${workspace.reviewBackendQuestionBankPath}\`
 - Frontend proposal: \`${workspace.frontendProposalPath}\`
 - Backend proposal: \`${workspace.backendProposalPath}\`
 - QA proposal: \`${workspace.qaProposalPath}\`
@@ -1424,7 +1950,9 @@ Beacon is the ONLY user-facing entrypoint for this flow. The user should not be 
 Beacon internally follows these principles:
 - Superpowers-style brainstorming for proactive multi-round requirement clarification
 - OpenSpec-style documentation under \`openspec/changes/<change-id>/...\`
+- Parallel review track for architecture and backend audits before approval
 - Oh-My-Agent-style role handoff for implementation
+- Backend-heavy changes must be challenged with \`${workspace.reviewBackendQuestionBankPath}\` before approval so counters, caching, idempotency, concurrency, migration, recovery, and observability assumptions are explicit
 
 Use them as internal behavior rules. Do not burden the user with those names unless they ask.
 
@@ -1438,7 +1966,14 @@ You MUST actively clarify the request before implementation.
   - \`${workspace.proposalPath}\`
   - \`${workspace.designPath}\`
   - \`${workspace.tasksPath}\`
+- Keep the review docs updated in parallel:
+  - \`${workspace.reviewArchitecturePath}\`
+  - \`${workspace.reviewBackendAuditPath}\`
+  - \`${workspace.reviewRiskRegisterPath}\`
+  - \`${workspace.reviewBackendQuestionBankPath}\`
+- Use \`${workspace.reviewBackendQuestionBankPath}\` to pressure-test backend assumptions whenever the backend path involves counters, hot writes, caching, idempotency, async work, or recovery behavior
 - Separate frontend, backend, and QA concerns
+- Make the frontend/backend/QA proposal files detailed enough that each worker can execute without inventing core technical decisions
 - Update the proposal files as understanding improves
 - Keep \`${workspace.overviewPath}\` as the high-level summary
 
@@ -1448,11 +1983,18 @@ Before asking to start development, make sure these files are meaningfully fille
 - \`${workspace.proposalPath}\`
 - \`${workspace.designPath}\`
 - \`${workspace.tasksPath}\`
+- \`${workspace.reviewArchitecturePath}\`
+- \`${workspace.reviewBackendAuditPath}\`
+- \`${workspace.reviewRiskRegisterPath}\`
 - \`${workspace.frontendProposalPath}\`
 - \`${workspace.backendProposalPath}\`
 - \`${workspace.qaProposalPath}\`
 
 The proposals should reflect the final clarified scope, not placeholders.
+They must be detailed enough that frontend, backend, and QA workers can act on them without inventing core technical decisions.
+Backend-heavy paths should explicitly answer the question-bank prompts for idempotency, concurrency, caching, migration, recovery, observability, and API compatibility.
+They must be detailed enough that frontend, backend, and QA workers can act on them without inventing core technical decisions.
+Backend-heavy paths should explicitly answer the question-bank prompts for idempotency, concurrency, caching, migration, recovery, observability, and API compatibility.
 
 ### Phase 3: Explicit approval gate
 

@@ -24,6 +24,7 @@ import { logForDebugging } from '../debug.js';
 import { isEnvTruthy } from '../envUtils.js';
 import { AbortError, MalformedCommandError } from '../errors.js';
 import { getDisplayPath } from '../file.js';
+import { getCwd } from '../cwd.js';
 import { extractResultText, prepareForkedCommandContext } from '../forkedAgent.js';
 import { getFsImplementation } from '../fsOperations.js';
 import { isFullscreenEnvEnabled } from '../fullscreen.js';
@@ -878,7 +879,7 @@ async function getMessagesForPromptSlashCommand(command: CommandBase & PromptCom
     const priorBeacon = context.getAppState().beacon;
     const beaconState = await prepareBeaconSessionState(
       args,
-      process.cwd(),
+      getCwd(),
       priorBeacon?.projectRoot,
     );
     await syncBeaconOverviewPhase(beaconState);
