@@ -42,15 +42,18 @@
 
 ## Beacon 交付流程
 
-Beacon 是一个结构化的四步交付循环，适合需要明确需求和验收标准的功能开发。它集成了 **OpenSpec**（文档规范）、**Superpowers**（行为纪律）和 **Oh-My-Agent**（角色协作）三大系统。
+Beacon 是一个结构化的六阶段交付循环，适合需要明确需求、风险边界和验收标准的功能开发。它集成了 **OpenSpec**（文档规范）、**Superpowers**（行为纪律）和 **Oh-My-Agent**（角色协作）三大系统，并加入了独立的安全威胁建模与 QA 三道门验收。
 
 ```bash
 # 启动 Beacon 流程
 claude
 > /beacon 实现一个用户登录功能
 
-# 或指定已有的 OpenSpec 文档
-> /beacon docs/proposal.md
+# 或指定已有的 文档/链接
+> /beacon docs.md
+
+# 也可以直接贴超长需求文档
+> /beacon # 个人记账应用
 ```
 
 ### 六阶段流程
@@ -63,6 +66,7 @@ claude
 | **开发协调** | `coordinating` | PM 规划任务，协调并行工作 |
 | **并行开发** | `implementing` | 前端/后端并行实施 |
 | **测试验收** | `verifying` | QA 验证，输出验收报告 |
+| **完成收口** | `completed` | 保留最终证据，不再继续改写 |
 
 ### 确认门禁
 
@@ -76,7 +80,7 @@ claude
 
 ### OpenSpec 文档体系
 
-Beacon 会在 `openspec/changes/<change-id>/` 下生成标准文档：
+Beacon 会在 `openspec/changes/<change-id>/` 下生成标准文档。为了兼容超长需求输入，`<change-id>` 使用短目录名 + 短 hash，不会把整段需求文本拼进路径里。
 
 | 文件 | 用途 |
 |------|------|
@@ -86,6 +90,13 @@ Beacon 会在 `openspec/changes/<change-id>/` 下生成标准文档：
 | `tasks.md` | 任务分解（Task List, Dependencies） |
 | `frontend/proposal.md` | 前端方案（UI 范围、验证行为） |
 | `backend/proposal.md` | 后端方案（API 形状、数据变更） |
+| `review/architecture-review.md` | 架构审查（可行性、耦合、边界） |
+| `review/backend-audit.md` | 后端审查（API、数据、并发、恢复） |
+| `review/security-threat-model.md` | 安全威胁建模（攻击面、信任边界） |
+| `review/security-audit.md` | 安全审查（认证、授权、滥用防护） |
+| `review/risk-register.md` | 风险登记（blocker / warning / note） |
+| `review/backend-question-bank.md` | 后端问答库（并发、幂等、恢复等） |
+| `review/security-question-bank.md` | 安全问答库（登录、会话、重放等） |
 | `qa/proposal.md` | 测试方案（测试覆盖、验收清单） |
 | `qa/acceptance.md` | 验收报告（Tests Run, Verified, Unverified） |
 
@@ -96,6 +107,8 @@ Beacon 会在 `openspec/changes/<change-id>/` 下生成标准文档：
 ```yaml
 clarification_gate: pending → ready     # 需求澄清完成
 coordination_brief: pending → ready     # PM 规划完成
+review_status: pending → in_progress → completed     # 架构/后端审查完成
+security_status: pending → in_progress → completed   # 安全审查完成
 frontend_handoff: pending → ready       # 前端交付完成
 backend_handoff: pending → ready        # 后端交付完成
 qa_status: pending → in_progress → completed  # QA 验收完成
@@ -106,6 +119,11 @@ qa_status: pending → in_progress → completed  # QA 验收完成
 | 角色 | 职责 |
 |------|------|
 | **pm/planner** | 确认依赖顺序、并行性、完成定义 |
+| **architecture-reviewer** | 审查架构可行性、隐藏耦合、范围边界 |
+| **backend-auditor** | 审查后端契约、并发、恢复、性能风险 |
+| **security-threat-modeler** | 建模攻击面、信任边界、滥用场景 |
+| **security-auditor** | 审查认证、授权、会话、滥用防护 |
+| **senior-reviewer** | 汇总 review 结论，输出 blocker / warning / note |
 | **frontend** | UI、表单行为、验证、用户流程 |
 | **backend** | API、数据变更、验证逻辑 |
 | **qa** | 验证行为、运行测试、记录结果 |
@@ -120,8 +138,16 @@ qa_status: pending → in_progress → completed  # QA 验收完成
 | **awaiting_approval** | `writing-plans` - 禁止直接编码，必须等待确认 |
 | **coordinating** | `subagent-driven-development` - 规划并行任务 |
 | **implementing** | `test-driven-development` - TDD，委托给角色工作器 |
-| **verifying** | `verification-before-completion` - 必须有验证证据 |
+| **verifying** | `verification-before-completion` - 必须有验证证据，且通过三道门 |
 | **completed** | 保留最终证据，不可静默扩展 |
+
+### 关键运行规则
+
+- `change-id` 只保留短目录名 + 短 hash，长需求全文只进入文档内容，不进入路径。
+- 每个可写文件只能有一个 owner，禁止多个 worker 同时写同一个 `proposal.md` / `review/*.md` / `acceptance.md`。
+- `frontend` 和 `backend` 默认同 turn 并行派发，主线程不能先等一个再发另一个。
+- `qa` 必须同时完成三道门：构建通过、API smoke test 通过、页面级契约检查通过。
+- review 如果发现 blocker，会回流到对应 owner 修改 md，而不是强行进入开发。
 
 ### 完整流程图
 
@@ -154,8 +180,8 @@ qa_status: pending → in_progress → completed  # QA 验收完成
          ▼
 ┌─────────────────────────────────────────┐
 │ Phase 4: 并行开发 (implementing)         │
-│ • frontend: UI 实现                      │
-│ • backend: API 实现（可并行）            │
+│ • frontend + backend 同 turn 派发        │
+│ • 主线程先发两个 Task，再等待结果        │
 │ • Superpowers: test-driven-development   │
 └─────────────────────────────────────────┘
          │
@@ -163,6 +189,7 @@ qa_status: pending → in_progress → completed  # QA 验收完成
 ┌─────────────────────────────────────────┐
 │ Phase 5: 测试验收 (verifying)            │
 │ • QA 验证行为，更新 acceptance.md        │
+│ • 三道门：build / API smoke / page contract
 │ • Superpowers: verification-before-completion │
 └─────────────────────────────────────────┘
          │

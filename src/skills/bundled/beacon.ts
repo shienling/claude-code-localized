@@ -150,6 +150,7 @@ type BeaconRole =
 type BeaconTaskTemplate = {
   role: BeaconRole
   filesToRead: string[]
+  writeScope?: string[]
   responsibilities: string[]
   deliverables: string[]
   executionStatusUpdate?: {
@@ -214,6 +215,7 @@ function getBeaconTaskTemplates(
         state.backendProposalPath,
         state.qaProposalPath,
       ],
+      writeScope: [state.overviewPath],
       responsibilities: [
         'confirm the approved scope',
         'identify dependency order and parallelizable work',
@@ -244,6 +246,7 @@ function getBeaconTaskTemplates(
         state.backendProposalPath,
         state.qaProposalPath,
       ],
+      writeScope: [state.reviewArchitecturePath],
       responsibilities: [
         'audit the proposed solution for feasibility, hidden coupling, and missed edge cases',
         'audit the architecture, scope boundaries, and data-flow shape',
@@ -273,6 +276,7 @@ function getBeaconTaskTemplates(
         state.backendProposalPath,
         state.qaProposalPath,
       ],
+      writeScope: [state.reviewBackendAuditPath, state.reviewBackendQuestionBankPath],
       responsibilities: [
         'audit the backend stack choice for compatibility, runtime, and dependency risks',
         'pressure-test counters, idempotency, concurrency, cache/queue usage, migration, recovery, and observability',
@@ -303,6 +307,7 @@ function getBeaconTaskTemplates(
         state.backendProposalPath,
         state.qaProposalPath,
       ],
+      writeScope: [state.reviewSecurityThreatModelPath, state.reviewSecurityQuestionBankPath],
       responsibilities: [
         'model the threat surface from an attacker-first point of view',
         'document assets, trust boundaries, entry points, abuse cases, and mitigations',
@@ -334,6 +339,7 @@ function getBeaconTaskTemplates(
         state.backendProposalPath,
         state.qaProposalPath,
       ],
+      writeScope: [state.reviewSecurityAuditPath],
       responsibilities: [
         'audit authentication, authorization, session handling, and abuse resistance',
         'verify frontend trust assumptions, logging hygiene, and secret handling',
@@ -368,6 +374,7 @@ function getBeaconTaskTemplates(
         state.backendProposalPath,
         state.qaProposalPath,
       ],
+      writeScope: [state.reviewRiskRegisterPath, state.overviewPath],
       responsibilities: [
         'synthesize the architecture review, backend audit, and security findings into a final go/no-go verdict',
         'write a prioritized risk register with blocker / warning / note callouts',
@@ -406,6 +413,7 @@ function getBeaconTaskTemplates(
         state.frontendProposalPath,
         state.backendProposalPath,
       ],
+      writeScope: [state.frontendProposalPath],
       responsibilities: [
         'implement the approved UI and client behavior',
         'wire any frontend contract changes needed for the approved backend shape',
@@ -441,6 +449,7 @@ function getBeaconTaskTemplates(
         state.backendProposalPath,
         state.qaProposalPath,
       ],
+      writeScope: [state.backendProposalPath],
       responsibilities: [
         'implement the approved API, validation, and persistence changes',
         'preserve compatibility expectations documented in the proposal',
@@ -478,6 +487,7 @@ function getBeaconTaskTemplates(
         state.qaProposalPath,
         state.qaAcceptancePath,
       ],
+      writeScope: [state.qaProposalPath, state.qaAcceptancePath],
       responsibilities: [
         'verify the implemented behavior against the approved proposal set',
         'run relevant tests/checks when possible',
@@ -510,6 +520,9 @@ function formatBeaconTaskTemplate(
     '',
     'Read:',
     ...template.filesToRead.map(path => `- ${path}`),
+    ...(template.writeScope
+      ? ['', 'Write only:', ...template.writeScope.map(path => `- ${path}`)]
+      : []),
     '',
     'Your job:',
     ...template.responsibilities.map(item => `- ${item}`),
@@ -559,7 +572,7 @@ function getBeaconExecutionPlan(): BeaconExecutionPlan {
         name: 'implementation',
         mode: 'parallel',
         roles: ['frontend', 'backend'],
-        goal: 'Implement the approved UI/client and API/data changes in parallel when dependencies allow.',
+        goal: 'Dispatch frontend and backend together in the same turn, then implement the approved UI/client and API/data changes in parallel when dependencies allow.',
       },
       {
         name: 'verification',
@@ -676,7 +689,10 @@ Main-thread rules:
 - run pm/planner first
 - launch architecture-reviewer, backend-auditor, security-threat-modeler, and security-auditor in the same coordination window so specialist audits happen in parallel with planning
 - launch senior-reviewer after the specialist findings are ready so the verdict is synthesized explicitly
+- assign a single owner to each writable file path; never have two workers write the same proposal/review/acceptance file in parallel
+- when a worker needs to influence another file, return the finding instead of editing a non-owned file
 - after pm/planner returns, launch frontend and backend as the default parallel pair in the same turn unless the execution brief explicitly says one blocks the other
+- dispatch both frontend and backend Task delegations before waiting on either one; do not let the first result delay launching the second
 - do not serialize frontend and backend by default; serial execution requires an explicit dependency reason grounded in the approved proposal set
 - wait for both frontend and backend results before launching qa
 - use qa as the final verification gate before you declare the Beacon change complete`
@@ -937,6 +953,7 @@ Required behavior:
 - drive frontend and backend execution as the default parallel pair when safe
 - use the Task tool instead of keeping all implementation in the main thread
 - create both frontend and backend Task delegations in the same turn by default
+- dispatch both frontend and backend Task delegations before you inspect either worker's output
 - only fall back to serial frontend/backend execution if pm/planner already identified a real dependency that makes parallel work unsafe
 - capture changed files, checks run, and blockers from both workers
 - after each worker handoff lands, update \`${state.overviewPath}\` with \`frontend_handoff: ready\` and/or \`backend_handoff: ready\`
@@ -1785,6 +1802,7 @@ Minimum execution shape:
 - security-threat-modeler: map attacker-first abuse cases, trust boundaries, and threat scenarios
 - security-auditor: audit authentication, authorization, session handling, tampering resistance, and abuse controls
 - pm/planner: confirm task order, dependency edges, and what "done" means
+- pm/planner: confirm task order, dependency edges, and explicitly mark frontend/backend as a parallel pair unless a real dependency blocks it
 - frontend: implement UI and client-side contract integration, and keep screen states, validation, error handling, and edge cases aligned with the approved proposal
 - backend: implement API/data changes and validation logic, and validate counters, idempotency, concurrency, cache/queue choices, recovery behavior, and security assumptions against the proposal and question banks
 - qa: verify implemented behavior, run tests, and record verified/unverified areas
