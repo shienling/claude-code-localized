@@ -21,6 +21,7 @@ import type {
 } from '../../providers/openai-compatible/types.js'
 import {
   fromOpenAIChatCompletionResponse,
+  toOpenAIChatMessages,
   toOpenAIChatToolChoice,
   toOpenAIChatTools,
   type AnthropicCompatibleToolSchema,
@@ -98,7 +99,6 @@ export async function* queryOpenAICompatibleModel({
   }
 
   const requestOptions = {
-    model,
     max_tokens: maxOutputTokens,
     temperature,
     signal,
@@ -136,7 +136,7 @@ export async function* queryOpenAICompatibleModel({
       for await (const chunk of client.createChatCompletionStream(
         {
           ...requestOptions,
-          messages: requestMessages,
+          messages: toOpenAIChatMessages(requestMessages, { includeImages: true }),
         },
       )) {
         streamState.firstChunk ??= chunk

@@ -2,7 +2,7 @@
 
 <p align="right"><strong>中文</strong> | <a href="./README.en.md">English</a></p>
 
-基于 Claude Code 泄露源码修复的**本地可运行版本**，支持接入 Anthropic-compatible API（如 MiniMax、OpenRouter 等），也支持通过独立的 Ark / OpenAI-compatible 通道接入部分服务。
+基于 Claude Code 泄露源码修复的**本地可运行版本**，支持三类互斥入口：`Claude`（原生 Anthropic）、`MiniMax`（Anthropic-compatible 第三方）、`Others` / `Ark`（OpenAI-compatible 自定义服务）。
 
 > 原始泄露源码无法直接运行。本仓库修复了启动链路中的多个阻塞问题，使完整的 Ink TUI 交互界面可以在本地工作。
 
@@ -411,7 +411,7 @@ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 >
 > 配置优先级：环境变量 > `.env` 文件 > `~/.claude/settings.json`
 
-> **Ark 提示**：如果你要使用 Ark，请走登录界面的 `Ark` 入口，或者在环境变量里使用 `ARK_*` / `MODEL_PROTOCOL_FAMILY=openai-compatible`，不要复用 `ANTHROPIC_*`。
+> **Ark 提示**：如果你要使用 Ark，请走登录界面的 `Ark` 入口，或者在环境变量里使用 `ARK_*` / `OPENAI_COMPATIBLE_*` / `MODEL_PROVIDER_KIND=openai-compatible`，不要复用 `ANTHROPIC_*`。
 
 ### 4. 启动
 

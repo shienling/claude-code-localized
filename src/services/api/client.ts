@@ -16,6 +16,8 @@ import {
   getAPIProvider,
   isFirstPartyAnthropicBaseUrl,
 } from 'src/utils/model/providers.js'
+import { resolveMiniMaxConfig } from 'src/providers/minimax.js'
+import { resolveModelProviderKind } from 'src/providers/protocols.js'
 import { getProxyFetchOptions } from 'src/utils/proxy.js'
 import {
   getIsNonInteractiveSession,
@@ -98,6 +100,7 @@ export async function getAnthropicClient({
   fetchOverride?: ClientOptions['fetch']
   source?: string
 }): Promise<Anthropic> {
+  const miniMaxConfig = resolveMiniMaxConfig()
   const containerId = process.env.CLAUDE_CODE_CONTAINER_ID
   const remoteSessionId = process.env.CLAUDE_CODE_REMOTE_SESSION_ID
   const clientApp = process.env.CLAUDE_AGENT_SDK_CLIENT_APP
@@ -303,13 +306,17 @@ export async function getAnthropicClient({
     authToken: isClaudeAISubscriber()
       ? getClaudeAIOAuthTokens()?.accessToken
       : undefined,
-    // Set baseURL from environment variable or OAuth config
-    ...(process.env.ANTHROPIC_BASE_URL
-      ? { baseURL: process.env.ANTHROPIC_BASE_URL }
-      : process.env.USER_TYPE === 'ant' &&
-        isEnvTruthy(process.env.USE_STAGING_OAUTH)
-        ? { baseURL: getOauthConfig().BASE_API_URL }
-        : {}),
+    // Set baseURL from the active provider family.
+    ...(resolveModelProviderKind() === 'minimax'
+      ? miniMaxConfig?.baseURL
+        ? { baseURL: miniMaxConfig.baseURL }
+        : {}
+      : process.env.ANTHROPIC_BASE_URL
+        ? { baseURL: process.env.ANTHROPIC_BASE_URL }
+        : process.env.USER_TYPE === 'ant' &&
+          isEnvTruthy(process.env.USE_STAGING_OAUTH)
+          ? { baseURL: getOauthConfig().BASE_API_URL }
+          : {}),
     ...ARGS,
     ...(isDebugToStdErr() && { logger: createStderrLogger() }),
   }

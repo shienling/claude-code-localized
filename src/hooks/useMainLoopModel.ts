@@ -1,5 +1,8 @@
 import { useEffect, useReducer } from 'react'
 import { onGrowthBookRefresh } from '../services/analytics/growthbook.js'
+import { resolveOpenAICompatibleConfig } from '../providers/openai-compatible/config.js'
+import { resolveMiniMaxConfig } from '../providers/minimax.js'
+import { resolveModelProviderKind } from '../providers/protocols.js'
 import { useAppState } from '../state/AppState.js'
 import {
   getDefaultMainLoopModelSetting,
@@ -30,5 +33,25 @@ export function useMainLoopModel(): ModelName {
       mainLoopModel ??
       getDefaultMainLoopModelSetting(),
   )
+
+  const providerKind = resolveModelProviderKind()
+  const openAICompatibleConfig = resolveOpenAICompatibleConfig()
+  const miniMaxConfig = resolveMiniMaxConfig()
+  if (providerKind === 'openai-compatible' && openAICompatibleConfig) {
+    return parseUserSpecifiedModel(openAICompatibleConfig.model)
+  }
+
+  if (providerKind === 'minimax' && miniMaxConfig) {
+    return parseUserSpecifiedModel(miniMaxConfig.model)
+  }
+
+  if (
+    providerKind === 'claude' &&
+    (model.toLowerCase().startsWith('minimax-') ||
+      (openAICompatibleConfig?.model && model === openAICompatibleConfig.model))
+  ) {
+    return parseUserSpecifiedModel(getDefaultMainLoopModelSetting())
+  }
+
   return model
 }

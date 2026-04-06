@@ -2,7 +2,7 @@
 
 <p align="right"><a href="./README.md">中文</a> | <strong>English</strong></p>
 
-A **locally runnable version** repaired from the leaked Claude Code source, with support for Anthropic-compatible API endpoints such as MiniMax and OpenRouter, plus a separate Ark / OpenAI-compatible path for services that only expose Chat Completions.
+A **locally runnable version** repaired from the leaked Claude Code source, with three mutually isolated model entry points: `Claude` (native Anthropic), `MiniMax` (Anthropic-compatible third-party), and `Others` / `Ark` (OpenAI-compatible custom services).
 
 > The original leaked source does not run as-is. This repository fixes multiple blocking issues in the startup path so the full Ink TUI can work locally.
 
@@ -252,7 +252,7 @@ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 >
 > Priority: Environment variables > `.env` file > `~/.claude/settings.json`
 
-> **Ark note**: If you want to use Ark, choose the `Ark` entry in the login flow or set `ARK_*` plus `MODEL_PROTOCOL_FAMILY=openai-compatible`. Do not reuse `ANTHROPIC_*` for that path.
+> **Ark note**: If you want to use Ark, choose the `Ark` entry in the login flow or set `ARK_*` / `OPENAI_COMPATIBLE_*` plus `MODEL_PROVIDER_KIND=openai-compatible`. Do not reuse `ANTHROPIC_*` for that path.
 
 ### 4. Start
 

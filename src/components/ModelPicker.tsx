@@ -5,7 +5,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useExitOnCtrlCDWithKeybindings } from 'src/hooks/useExitOnCtrlCDWithKeybindings.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
 import { FAST_MODE_MODEL_DISPLAY, isFastModeAvailable, isFastModeCooldown, isFastModeEnabled } from 'src/utils/fastMode.js';
-import { Box, Text } from '../ink.js';
+import { Box, Text, useInput } from '../ink.js';
 import { useKeybindings } from '../keybindings/useKeybinding.js';
 import { useAppState, useSetAppState } from '../state/AppState.js';
 import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, modelSupportsEffort, modelSupportsMaxEffort, resolvePickerEffortPersistence, toPersistableEffort } from '../utils/effort.js';
@@ -21,7 +21,15 @@ import { KeyboardShortcutHint } from './design-system/KeyboardShortcutHint.js';
 import { Pane } from './design-system/Pane.js';
 import { effortLevelToSymbol } from './EffortIndicator.js';
 import { createArkClient } from '../providers/ark.js';
-import { buildOpenAICompatibleEnv } from '../providers/openai-compatible/config.js';
+import { buildMiniMaxEnv, resolveMiniMaxConfig } from '../providers/minimax.js';
+import {
+  buildOpenAICompatibleEnv,
+  resolveOpenAICompatibleConfig,
+  stripLegacyArkEnv,
+} from '../providers/openai-compatible/config.js';
+import { formatOpenAICompatibleError } from '../providers/openai-compatible/errors.js';
+import { resolveModelProviderKind } from '../providers/protocols.js';
+import { clearAnthropicAuthCaches } from '../utils/auth.js';
 import TextInput from './TextInput.js';
 export type Props = {
   initial: string | null;
@@ -47,13 +55,48 @@ type CustomProviderDraft = {
   apiKey: string;
 };
 type CustomProviderStep = 'baseURL' | 'model' | 'apiKey';
-function getInitialCustomProviderDraft(): CustomProviderDraft {
+function isMiniMaxModel(model: string | null | undefined): boolean {
+  return typeof model === 'string' && model.toLowerCase().startsWith('minimax-')
+}
+export function getInitialCustomProviderDraft(
+  env: NodeJS.ProcessEnv = process.env,
+): CustomProviderDraft {
+  const config = resolveOpenAICompatibleConfig(env)
   return {
-    baseURL: process.env.OPENAI_COMPATIBLE_BASE_URL?.trim() || process.env.ARK_BASE_URL?.trim() || '',
-    model: process.env.OPENAI_COMPATIBLE_MODEL?.trim() || process.env.ARK_MODEL?.trim() || '',
-    apiKey: process.env.OPENAI_COMPATIBLE_API_KEY?.trim() || process.env.ARK_API_KEY?.trim() || '',
+    baseURL: config?.baseURL ?? '',
+    model: config?.model ?? '',
+    apiKey: config?.apiKey ?? '',
   };
 }
+export function resolveModelPickerDefaultValue(
+  initial: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (initial === null) {
+    return NO_PREFERENCE
+  }
+
+  const openAICompatibleConfig = resolveOpenAICompatibleConfig(env)
+  const providerKind = resolveModelProviderKind(env)
+  if (providerKind === 'openai-compatible' && openAICompatibleConfig) {
+    return CUSTOM_MODEL_OPTION
+  }
+
+  const miniMaxConfig = resolveMiniMaxConfig(env)
+  if (providerKind === 'minimax' && miniMaxConfig) {
+    return miniMaxConfig.model
+  }
+
+  if (providerKind === 'claude' && isMiniMaxModel(initial)) {
+    return NO_PREFERENCE
+  }
+  if (providerKind === 'claude' && openAICompatibleConfig?.model && initial === openAICompatibleConfig.model) {
+    return NO_PREFERENCE
+  }
+
+  return initial
+}
+
 function CustomProviderEntry({
   initialValue,
   onBack,
@@ -84,6 +127,12 @@ function CustomProviderEntry({
     setCursorOffset(currentValue.length);
     setError(null);
   }, [draft, step]);
+
+  useInput((_, key) => {
+    if (key.escape) {
+      handleBack();
+    }
+  });
 
   const stepMeta =
     step === 'baseURL'
@@ -123,11 +172,14 @@ function CustomProviderEntry({
     saveGlobalConfig(current => ({
       ...current,
       env: {
-        ...current.env,
+        ...stripLegacyArkEnv(current.env),
         ...buildOpenAICompatibleEnv(nextDraft),
       },
     }))
     applyConfigEnvironmentVariables()
+    delete process.env.ARK_API_KEY;
+    delete process.env.ARK_BASE_URL;
+    delete process.env.ARK_MODEL;
   }
 
   function handleBack() {
@@ -176,7 +228,7 @@ function CustomProviderEntry({
       await persistProviderConfig(nextDraft);
       await onSubmit(nextDraft.model);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatOpenAICompatibleError(err));
     } finally {
       setIsValidating(false);
     }
@@ -187,7 +239,7 @@ function CustomProviderEntry({
       <Text dimColor={true}>{stepMeta.description} Press Esc to go back.</Text>
       {error && <Text color="error">{error}</Text>}
       {isValidating && <Text dimColor={true}>Testing connection…</Text>}
-      <Box><TextInput value={value} onChange={setValue} onSubmit={handleSubmit} onExit={handleBack} cursorOffset={cursorOffset} onChangeCursorOffset={setCursorOffset} columns={80} showCursor={true} /></Box>
+      <Box><TextInput value={value} onChange={setValue} onSubmit={handleSubmit} onExit={handleBack} cursorOffset={cursorOffset} onChangeCursorOffset={setCursorOffset} columns={80} showCursor={true} disableEscapeDoublePress={true} /></Box>
     </Box>;
 }
 export function ModelPicker(t0) {
@@ -204,7 +256,7 @@ export function ModelPicker(t0) {
   } = t0;
   const setAppState = useSetAppState();
   const exitState = useExitOnCtrlCDWithKeybindings();
-  const initialValue = initial === null ? NO_PREFERENCE : initial;
+  const initialValue = resolveModelPickerDefaultValue(initial);
   const [focusedValue, setFocusedValue] = useState(initialValue);
   const isFastMode = useAppState(_temp);
   const [hasToggledEffort, setHasToggledEffort] = useState(false);
@@ -219,7 +271,7 @@ export function ModelPicker(t0) {
   }
   const [effort, setEffort] = useState(t1);
   const [showCustomModelEntry, setShowCustomModelEntry] = useState(false);
-  const [customProviderDraft, setCustomProviderDraft] = useState<CustomProviderDraft>(getInitialCustomProviderDraft);
+  const [customProviderDraft, setCustomProviderDraft] = useState<CustomProviderDraft>(() => getInitialCustomProviderDraft());
   const t2 = isFastMode ?? false;
   let t3;
   if ($[2] !== t2) {
@@ -232,23 +284,23 @@ export function ModelPicker(t0) {
   const modelOptions = t3;
   let t4;
   bb0: {
-    if (initial !== null && !modelOptions.some(opt => opt.value === initial)) {
+    if (initialValue !== NO_PREFERENCE && initialValue !== CUSTOM_MODEL_OPTION && !modelOptions.some(opt => opt.value === initialValue)) {
       let t5;
-      if ($[4] !== initial) {
-        t5 = modelDisplayString(initial);
-        $[4] = initial;
+      if ($[4] !== initialValue) {
+        t5 = modelDisplayString(initialValue);
+        $[4] = initialValue;
         $[5] = t5;
       } else {
         t5 = $[5];
       }
       let t6;
-      if ($[6] !== initial || $[7] !== t5) {
+      if ($[6] !== initialValue || $[7] !== t5) {
         t6 = {
-          value: initial,
+          value: initialValue,
           label: t5,
           description: "Current model"
         };
-        $[6] = initial;
+        $[6] = initialValue;
         $[7] = t5;
         $[8] = t6;
       } else {
@@ -420,6 +472,7 @@ export function ModelPicker(t0) {
     handleSelect(model);
   };
   const handleSelectionChange = (value_0: string) => {
+    clearAnthropicAuthCaches();
     if (value_0 === CUSTOM_MODEL_OPTION) {
       setCustomProviderDraft(getInitialCustomProviderDraft());
       setShowCustomModelEntry(true);
@@ -427,6 +480,50 @@ export function ModelPicker(t0) {
     }
     setShowCustomModelEntry(false);
     setCustomProviderDraft(getInitialCustomProviderDraft());
+    const isMiniMaxSelection = value_0.toLowerCase().startsWith('minimax-');
+    saveGlobalConfig(current => {
+      if (isMiniMaxSelection) {
+        return {
+          ...current,
+          env: {
+            ...current.env,
+            ...buildMiniMaxEnv({
+              apiKey: resolveMiniMaxConfig(current.env)?.apiKey ?? current.env.MINIMAX_API_KEY ?? '',
+              baseURL: current.env.MINIMAX_BASE_URL ?? 'https://api.minimaxi.com/anthropic',
+              model: value_0,
+            }),
+          },
+        };
+      }
+
+      const {
+        ANTHROPIC_BASE_URL: anthropicBaseURL,
+        ANTHROPIC_AUTH_TOKEN: anthropicAuthToken,
+        ...restEnv
+      } = current.env
+      const sanitizedEnv = {
+        ...restEnv,
+        ...(!anthropicBaseURL?.includes('minimaxi.com/anthropic') &&
+        anthropicBaseURL
+          ? { ANTHROPIC_BASE_URL: anthropicBaseURL }
+          : {}),
+        ...(current.env.MINIMAX_API_KEY &&
+        anthropicAuthToken === current.env.MINIMAX_API_KEY
+          ? {}
+          : anthropicAuthToken
+            ? { ANTHROPIC_AUTH_TOKEN: anthropicAuthToken }
+            : {}),
+        MODEL_PROVIDER_KIND: 'claude',
+        MODEL_PROTOCOL_FAMILY: 'anthropic-compatible',
+        ANTHROPIC_MODEL: value_0,
+      }
+
+      return {
+        ...current,
+        env: sanitizedEnv,
+      };
+    });
+    applyConfigEnvironmentVariables();
     handleSelect(value_0);
   };
   const handleCustomModelBack = () => {

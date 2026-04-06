@@ -5,12 +5,19 @@ This project now has two model access paths:
 - **Anthropic-compatible main path**: keeps using the existing Anthropic SDK and Anthropic Messages API request shape. MiniMax, OpenRouter, and any service exposed through LiteLLM as `/v1/messages` use this path.
 - **OpenAI-compatible separate path**: Ark and other services that only expose `chat/completions` use an independent adapter and do not reuse `ANTHROPIC_*` settings.
 
+At the UI/config layer we expose three mutually exclusive entry points:
+
+- `Claude`: native Anthropic / Claude
+- `MiniMax`: a dedicated Anthropic-compatible third-party entry
+- `Others`: a custom OpenAI-compatible entry
+
 ## Compatibility Matrix
 
 | Path | Typical services | Required env | Auth | Streaming / tool calls | Known limits |
 |------|------------------|--------------|------|-------------------------|--------------|
-| Anthropic-compatible main path | Anthropic, MiniMax, OpenRouter, LiteLLM-forwarded services | `ANTHROPIC_*` | `x-api-key` or `Authorization: Bearer`, depending on the service | Uses the existing Anthropic streaming and tool-call pipeline | Best for services that natively support Anthropic Messages API; if the service only supports OpenAI, you need protocol translation first |
-| OpenAI-compatible separate path | Ark and other services that only expose OpenAI Chat Completions | `ARK_*` + `MODEL_PROTOCOL_FAMILY=openai-compatible` | `Authorization: Bearer` | Uses the independent OpenAI-compatible adapter, with streaming fallback | Does not reuse `ANTHROPIC_*`, and does not assume Anthropic-specific params exist |
+| Claude / Anthropic native | Claude.ai / Anthropic Console | `ANTHROPIC_*` + `MODEL_PROVIDER_KIND=claude` | `x-api-key` or `OAuth`, depending on the login method | Uses the existing Anthropic streaming and tool-call pipeline | Native Claude path, isolated from MiniMax / Others |
+| MiniMax Anthropic-compatible | MiniMax | `MINIMAX_*` + `MODEL_PROVIDER_KIND=minimax` | `x-api-key` or `Authorization: Bearer`, depending on the service | Uses the existing Anthropic streaming and tool-call pipeline | Best for services that natively support Anthropic Messages API; if the service only supports OpenAI, you need protocol translation first |
+| OpenAI-compatible separate path | Ark and other services that only expose OpenAI Chat Completions | `ARK_*` or `OPENAI_COMPATIBLE_*` + `MODEL_PROVIDER_KIND=openai-compatible` | `Authorization: Bearer` | Uses the independent OpenAI-compatible adapter, with streaming fallback | Does not reuse `ANTHROPIC_*`, and does not assume Anthropic-specific params exist |
 
 If your provider natively supports Anthropic Messages API, or you already translated it into an Anthropic-compatible endpoint via LiteLLM, prefer the main path.
 If your provider only supports OpenAI Chat Completions, use the Ark path or another OpenAI-compatible adapter.

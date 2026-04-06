@@ -3,6 +3,7 @@ import {
   buildOpenAICompatibleEnv,
   buildOpenAICompatibleRequestURL,
   resolveOpenAICompatibleConfig,
+  stripLegacyArkEnv,
 } from './config.js'
 import { resolveArkConfig } from '../ark.js'
 import { resolveModelProtocolFamily } from '../protocols.js'
@@ -42,6 +43,23 @@ describe('openai-compatible config', () => {
     })
   })
 
+  it('prefers canonical openai-compatible env vars over legacy Ark vars', () => {
+    const config = resolveOpenAICompatibleConfig({
+      ARK_API_KEY: 'legacy-ark-key',
+      ARK_MODEL: 'legacy-ark-model',
+      ARK_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3/',
+      OPENAI_COMPATIBLE_API_KEY: 'openai-compatible-key',
+      OPENAI_COMPATIBLE_MODEL: 'gpt-4o-mini',
+      OPENAI_COMPATIBLE_BASE_URL: 'https://api.example.com/v1/',
+    })
+
+    expect(config).toEqual({
+      apiKey: 'openai-compatible-key',
+      baseURL: 'https://api.example.com/v1',
+      model: 'gpt-4o-mini',
+    })
+  })
+
   it('defaults to anthropic-compatible unless explicitly switched', () => {
     expect(resolveModelProtocolFamily({})).toBe('anthropic-compatible')
     expect(
@@ -62,7 +80,21 @@ describe('openai-compatible config', () => {
       OPENAI_COMPATIBLE_API_KEY: 'key',
       OPENAI_COMPATIBLE_BASE_URL: 'https://api.example.com/v1',
       OPENAI_COMPATIBLE_MODEL: 'gpt-4o',
+      MODEL_PROVIDER_KIND: 'openai-compatible',
       MODEL_PROTOCOL_FAMILY: 'openai-compatible',
+    })
+  })
+
+  it('strips legacy Ark env vars when saving canonical openai-compatible config', () => {
+    expect(
+      stripLegacyArkEnv({
+        ARK_API_KEY: 'legacy-ark-key',
+        ARK_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3',
+        ARK_MODEL: 'legacy-ark-model',
+        OPENAI_COMPATIBLE_API_KEY: 'key',
+      }),
+    ).toEqual({
+      OPENAI_COMPATIBLE_API_KEY: 'key',
     })
   })
 })

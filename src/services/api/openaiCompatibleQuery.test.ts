@@ -54,7 +54,7 @@ describe('queryOpenAICompatibleModel', () => {
       for await (const message of queryOpenAICompatibleModel({
         messages: [createUserMessage({ content: 'hello' })],
         systemPrompt: asSystemPrompt(['You are helpful.']),
-        model: 'doubao-seed-2-0-code-preview-260215',
+        model: 'claude-sonnet-4-6',
         signal: new AbortController().signal,
         maxOutputTokens: 64,
         temperature: 0.2,

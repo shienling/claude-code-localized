@@ -16,6 +16,9 @@ import { getSettings_DEPRECATED } from '../settings/settings.js'
 import { checkOpus1mAccess, checkSonnet1mAccess } from './check1mAccess.js'
 import { getAPIProvider } from './providers.js'
 import { isModelAllowed } from './modelAllowlist.js'
+import { resolveMiniMaxConfig } from '../../providers/minimax.js'
+import { resolveOpenAICompatibleConfig } from '../../providers/openai-compatible/config.js'
+import { resolveModelProviderKind } from '../../providers/protocols.js'
 import {
   getCanonicalName,
   getClaudeAiUserDefaultModelDescription,
@@ -42,6 +45,21 @@ export type ModelOption = {
   label: string
   description: string
   descriptionForModel?: string
+}
+
+const MINIMAX_DEFAULT_MODEL = 'MiniMax-M2.7-highspeed'
+
+function isMiniMaxModel(model: ModelSetting | string | null | undefined): boolean {
+  return typeof model === 'string' && model.toLowerCase().startsWith('minimax-')
+}
+
+function getMiniMaxOption(model: string = resolveMiniMaxConfig()?.model || process.env.MINIMAX_MODEL || process.env.ANTHROPIC_MODEL || MINIMAX_DEFAULT_MODEL): ModelOption {
+  return {
+    value: model,
+    label: 'MiniMax-M2.7',
+    description: 'MiniMax Anthropic-compatible API',
+    descriptionForModel: `MiniMax M2.7 (${model})`,
+  }
 }
 
 export function getDefaultOptionForUser(fastMode = false): ModelOption {
@@ -485,15 +503,27 @@ export function getModelOptions(fastMode = false): ModelOption[] {
     }
   }
 
+  if (!options.some(existing => existing.value === getMiniMaxOption().value)) {
+    options.push(getMiniMaxOption())
+  }
+
   // Add custom model from either the current model value or the initial one
   // if it is not already in the options.
   let customModel: ModelSetting = null
   const currentMainLoopModel = getUserSpecifiedModelSetting()
   const initialMainLoopModel = getInitialMainLoopModel()
+  const providerKind = resolveModelProviderKind()
+  const openAICompatibleConfig = resolveOpenAICompatibleConfig()
   if (currentMainLoopModel !== undefined && currentMainLoopModel !== null) {
     customModel = currentMainLoopModel
   } else if (initialMainLoopModel !== null) {
     customModel = initialMainLoopModel
+  }
+  if (providerKind === 'claude' && isMiniMaxModel(customModel)) {
+    customModel = null
+  }
+  if (providerKind === 'claude' && openAICompatibleConfig?.model && customModel === openAICompatibleConfig.model) {
+    customModel = null
   }
   if (customModel === null || options.some(opt => opt.value === customModel)) {
     return appendCustomModelOption(filterModelOptionsByAllowlist(options))

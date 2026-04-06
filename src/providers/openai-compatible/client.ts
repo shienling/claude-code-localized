@@ -3,6 +3,9 @@ import {
   type OpenAICompatibleProviderConfig,
 } from './config.js'
 import { toOpenAIChatMessages } from './adapter.js'
+import {
+  OpenAICompatibleRequestError,
+} from './errors.js'
 import type {
   AnthropicCompatibleMessage,
   OpenAIChatCompletionChunk,
@@ -28,9 +31,10 @@ export class OpenAICompatibleClient {
   ): Promise<OpenAIChatCompletionResponse> {
     const { signal, ...bodyRequest } = request
     const fetchImpl = this.options.fetchImpl ?? fetch
-    const response = await fetchImpl(
-      buildOpenAICompatibleRequestURL(this.config.baseURL),
-      {
+    const requestURL = buildOpenAICompatibleRequestURL(this.config.baseURL)
+    let response: Response
+    try {
+      response = await fetchImpl(requestURL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -41,14 +45,25 @@ export class OpenAICompatibleClient {
           ...bodyRequest,
           model: bodyRequest.model ?? this.config.model,
         }),
-      },
-    )
+      })
+    } catch (cause) {
+      throw new OpenAICompatibleRequestError({
+        kind: 'network',
+        requestURL,
+        message: `Unable to connect to API at ${requestURL}. Check the API address, network, proxy, and TLS certificates.`,
+        cause,
+      })
+    }
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => '')
-      throw new Error(
-        `OpenAI-compatible request failed with ${response.status}: ${errorText || response.statusText}`,
-      )
+      throw new OpenAICompatibleRequestError({
+        kind: 'http',
+        requestURL,
+        status: response.status,
+        responseText: errorText,
+        message: `OpenAI-compatible request failed with ${response.status}: ${errorText || response.statusText}`,
+      })
     }
 
     return (await response.json()) as OpenAIChatCompletionResponse
@@ -62,9 +77,10 @@ export class OpenAICompatibleClient {
   ): AsyncGenerator<OpenAIChatCompletionChunk> {
     const { signal, ...bodyRequest } = request
     const fetchImpl = this.options.fetchImpl ?? fetch
-    const response = await fetchImpl(
-      buildOpenAICompatibleRequestURL(this.config.baseURL),
-      {
+    const requestURL = buildOpenAICompatibleRequestURL(this.config.baseURL)
+    let response: Response
+    try {
+      response = await fetchImpl(requestURL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -77,18 +93,33 @@ export class OpenAICompatibleClient {
           stream: true,
           model: bodyRequest.model ?? this.config.model,
         }),
-      },
-    )
+      })
+    } catch (cause) {
+      throw new OpenAICompatibleRequestError({
+        kind: 'network',
+        requestURL,
+        message: `Unable to connect to API at ${requestURL}. Check the API address, network, proxy, and TLS certificates.`,
+        cause,
+      })
+    }
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => '')
-      throw new Error(
-        `OpenAI-compatible request failed with ${response.status}: ${errorText || response.statusText}`,
-      )
+      throw new OpenAICompatibleRequestError({
+        kind: 'http',
+        requestURL,
+        status: response.status,
+        responseText: errorText,
+        message: `OpenAI-compatible request failed with ${response.status}: ${errorText || response.statusText}`,
+      })
     }
 
     if (!response.body) {
-      throw new Error('OpenAI-compatible streaming request returned no body')
+      throw new OpenAICompatibleRequestError({
+        kind: 'empty-response',
+        requestURL,
+        message: `API at ${requestURL} returned no response body.`,
+      })
     }
 
     const reader = response.body.getReader()

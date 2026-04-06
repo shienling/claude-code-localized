@@ -5,12 +5,19 @@
 - **Anthropic-compatible 主路径**：继续沿用现有 Anthropic SDK，请求形状是 Anthropic Messages API。MiniMax、OpenRouter，以及通过 LiteLLM 暴露出 `/v1/messages` 的服务都走这条路。
 - **OpenAI-compatible 独立路径**：Ark 以及其他只提供 `chat/completions` 的服务走独立适配器，不复用 `ANTHROPIC_*` 配置。
 
+在 UI 和配置层面，我们再把它们拆成三个互斥入口：
+
+- `Claude`：原生 Anthropic / Claude 路径
+- `MiniMax`：Anthropic-compatible 的独立第三方入口
+- `Others`：OpenAI-compatible 自定义入口
+
 ## 兼容性矩阵
 
 | 路径 | 适用服务 | 需要的 env | 鉴权方式 | 流式 / tool call | 已知限制 |
 |------|----------|-----------|----------|------------------|----------|
-| Anthropic-compatible 主路径 | Anthropic 官方、MiniMax、OpenRouter、LiteLLM 转发后的服务 | `ANTHROPIC_*` | `x-api-key` 或 `Authorization: Bearer`，取决于具体服务 | 沿用现有 Anthropic 流式与工具调用管线 | 适合原生支持 Anthropic Messages API 的服务；如果目标服务只支持 OpenAI 协议，需要先做协议转换 |
-| OpenAI-compatible 独立路径 | Ark，以及其他只提供 OpenAI Chat Completions 的服务 | `ARK_*` + `MODEL_PROTOCOL_FAMILY=openai-compatible` | `Authorization: Bearer` | 走独立 OpenAI-compatible 适配器，支持流式回退 | 不复用 `ANTHROPIC_*`，也不假设 Anthropic 专有参数存在 |
+| Claude / Anthropic 官方 | Claude.ai / Anthropic Console | `ANTHROPIC_*` + `MODEL_PROVIDER_KIND=claude` | `x-api-key` 或 `OAuth`，取决于登录方式 | 沿用现有 Anthropic 流式与工具调用管线 | 原生 Claude 路径，和 MiniMax / Others 互不覆盖 |
+| MiniMax Anthropic-compatible | MiniMax | `MINIMAX_*` + `MODEL_PROVIDER_KIND=minimax` | `x-api-key` 或 `Authorization: Bearer`，取决于具体服务 | 沿用现有 Anthropic 流式与工具调用管线 | 适合原生支持 Anthropic Messages API 的服务；如果目标服务只支持 OpenAI 协议，需要先做协议转换 |
+| OpenAI-compatible 独立路径 | Ark，以及其他只提供 OpenAI Chat Completions 的服务 | `OPENAI_COMPATIBLE_*` 或 `ARK_*` + `MODEL_PROVIDER_KIND=openai-compatible` | `Authorization: Bearer` | 走独立 OpenAI-compatible 适配器，支持流式回退 | 不复用 `ANTHROPIC_*`，也不假设 Anthropic 专有参数存在 |
 
 如果模型供应商原生支持 Anthropic Messages API，或者你已经通过 LiteLLM 把它转换成 Anthropic-compatible 端点，优先走主路径。
 如果供应商只支持 OpenAI Chat Completions，就走 Ark 这条独立通道，或者复用同类 OpenAI-compatible 适配器。

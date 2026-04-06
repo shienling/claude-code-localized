@@ -18,6 +18,7 @@ import {
   type SessionExternalMetadata,
 } from '../utils/sessionState.js'
 import { updateSettingsForSource } from '../utils/settings/settings.js'
+import { resolveModelProviderKind } from '../providers/protocols.js'
 import type { AppState } from './AppStateStore.js'
 
 // Inverse of the push below — restore on worker restart.
@@ -92,12 +93,17 @@ export function onChangeAppState({
   }
 
   // mainLoopModel: remove it from settings?
+  const providerKind = resolveModelProviderKind()
   if (
     newState.mainLoopModel !== oldState.mainLoopModel &&
     newState.mainLoopModel === null
   ) {
-    // Remove from settings
-    updateSettingsForSource('userSettings', { model: undefined })
+    // Only Claude should write to the shared userSettings.model.
+    // MiniMax and OpenAI-compatible providers keep their model in their own
+    // env-backed config so switching providers does not overwrite Claude.
+    if (providerKind === 'claude') {
+      updateSettingsForSource('userSettings', { model: undefined })
+    }
     setMainLoopModelOverride(null)
   }
 
@@ -106,8 +112,10 @@ export function onChangeAppState({
     newState.mainLoopModel !== oldState.mainLoopModel &&
     newState.mainLoopModel !== null
   ) {
-    // Save to settings
-    updateSettingsForSource('userSettings', { model: newState.mainLoopModel })
+    // Keep Claude model persistence separate from MiniMax / OpenAI-compatible state.
+    if (providerKind === 'claude') {
+      updateSettingsForSource('userSettings', { model: newState.mainLoopModel })
+    }
     setMainLoopModelOverride(newState.mainLoopModel)
   }
 

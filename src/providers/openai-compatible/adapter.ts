@@ -85,6 +85,7 @@ function imageSourceToURL(
 
 export function toOpenAIChatMessages(
   messages: AnthropicCompatibleMessage[],
+  options: { includeImages?: boolean } = { includeImages: true },
 ): OpenAIChatMessage[] {
   const output: OpenAIChatMessage[] = []
 
@@ -117,14 +118,16 @@ export function toOpenAIChatMessages(
         })
         hasNonResultContent = true
       } else if (isToolUseBlock(block)) {
-        toolCalls.push({
-          id: block.id,
-          type: 'function',
-          function: {
-            name: block.name,
-            arguments: stringifyContent(block.input),
-          },
-        })
+        if (message.role === 'assistant') {
+          toolCalls.push({
+            id: block.id,
+            type: 'function',
+            function: {
+              name: block.name,
+              arguments: stringifyContent(block.input),
+            },
+          })
+        }
       } else if (isToolResultBlock(block)) {
         output.push({
           role: 'tool',
@@ -148,7 +151,7 @@ export function toOpenAIChatMessages(
       output.push({
         role: message.role,
         content:
-          imageParts.length > 0
+          options.includeImages && imageParts.length > 0
             ? [
                 ...imageParts,
                 ...(textParts.length > 0

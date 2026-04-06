@@ -11,6 +11,11 @@ import { getSSLErrorHint } from '../services/api/errorUtils.js';
 import { sendNotification } from '../services/notifier.js';
 import { OAuthService } from '../services/oauth/index.js';
 import { createArkClient } from '../providers/ark.js';
+import {
+  buildOpenAICompatibleEnv,
+  stripLegacyArkEnv,
+} from '../providers/openai-compatible/config.js';
+import { formatOpenAICompatibleError } from '../providers/openai-compatible/errors.js';
 import { getOauthAccountInfo, validateForceLoginOrg } from '../utils/auth.js';
 import { saveGlobalConfig } from '../utils/config.js';
 import { logError } from '../utils/log.js';
@@ -269,23 +274,32 @@ export function ConsoleOAuthFlow({
       }
 
       // Save Minimax API key to config
-      saveGlobalConfig(current => ({
-        ...current,
-        env: {
-          ...current.env,
-          ANTHROPIC_AUTH_TOKEN: value.trim(),
-          ANTHROPIC_BASE_URL: 'https://api.minimaxi.com/anthropic',
-          ANTHROPIC_MODEL: minimaxModel,
-          ANTHROPIC_DEFAULT_SONNET_MODEL: minimaxModel,
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: minimaxModel,
-          ANTHROPIC_DEFAULT_OPUS_MODEL: minimaxModel,
-          MODEL_PROTOCOL_FAMILY: 'anthropic-compatible',
+      saveGlobalConfig(current => {
+        const {
+          ANTHROPIC_DEFAULT_SONNET_MODEL: _anthropicDefaultSonnetModel,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: _anthropicDefaultHaikuModel,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: _anthropicDefaultOpusModel,
+          ...restEnv
+        } = current.env
+        return {
+          ...current,
+          env: {
+            ...restEnv,
+            MINIMAX_API_KEY: value.trim(),
+            MINIMAX_BASE_URL: 'https://api.minimaxi.com/anthropic',
+            MINIMAX_MODEL: minimaxModel,
+            MODEL_PROVIDER_KIND: 'minimax',
+            MODEL_PROTOCOL_FAMILY: 'anthropic-compatible',
+          },
         }
-      }));
+      });
 
       setOAuthStatus({
         state: 'success'
       });
+      delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+      delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+      delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
       void sendNotification({
         message: 'Minimax API key set successfully',
         notificationType: 'auth_success'
@@ -345,10 +359,13 @@ export function ConsoleOAuthFlow({
         return;
       }
 
+      const arkEnv = buildOpenAICompatibleEnv({
+        apiKey: value.trim(),
+        baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+        model: arkModel,
+      });
       const arkClient = createArkClient({
-        ARK_API_KEY: value.trim(),
-        ARK_MODEL: arkModel,
-        ARK_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3',
+        ...arkEnv,
       })
       if (!arkClient) {
         throw new Error('Unable to initialize Ark client')
@@ -371,17 +388,18 @@ export function ConsoleOAuthFlow({
       saveGlobalConfig(current => ({
         ...current,
         env: {
-          ...current.env,
-          ARK_API_KEY: value.trim(),
-          ARK_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3',
-          ARK_MODEL: arkModel,
-          MODEL_PROTOCOL_FAMILY: 'openai-compatible',
+          ...stripLegacyArkEnv(current.env),
+          ...arkEnv,
+          MODEL_PROVIDER_KIND: 'openai-compatible',
         }
       }));
 
       setOAuthStatus({
         state: 'success'
       });
+      delete process.env.ARK_API_KEY;
+      delete process.env.ARK_BASE_URL;
+      delete process.env.ARK_MODEL;
       void sendNotification({
         message: 'Ark API key set successfully',
         notificationType: 'auth_success'
@@ -390,7 +408,7 @@ export function ConsoleOAuthFlow({
       logError(err);
       setOAuthStatus({
         state: 'error',
-        message: (err as Error).message,
+        message: formatOpenAICompatibleError(err),
         toRetry: {
           state: 'ark_api_key_input'
         }
@@ -680,6 +698,31 @@ function OAuthStatusMessage(t0) {
                   state: "ark_setup"
                 });
               } else {
+                saveGlobalConfig(current => ({
+                  ...current,
+                  env: (() => {
+                    const {
+                      ANTHROPIC_BASE_URL: anthropicBaseURL,
+                      ANTHROPIC_AUTH_TOKEN: anthropicAuthToken,
+                      ...restEnv
+                    } = current.env
+                    return {
+                      ...restEnv,
+                      ...(!anthropicBaseURL?.includes('minimaxi.com/anthropic') &&
+                      anthropicBaseURL
+                        ? { ANTHROPIC_BASE_URL: anthropicBaseURL }
+                        : {}),
+                      ...(current.env.MINIMAX_API_KEY &&
+                      anthropicAuthToken === current.env.MINIMAX_API_KEY
+                        ? {}
+                        : anthropicAuthToken
+                          ? { ANTHROPIC_AUTH_TOKEN: anthropicAuthToken }
+                          : {}),
+                      MODEL_PROVIDER_KIND: 'claude',
+                      MODEL_PROTOCOL_FAMILY: 'anthropic-compatible',
+                    }
+                  })(),
+                }));
                 setOAuthStatus({
                   state: "ready_to_start"
                 });

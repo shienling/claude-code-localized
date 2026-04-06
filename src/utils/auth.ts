@@ -15,6 +15,7 @@ import {
   getIsNonInteractiveSession,
   preferThirdPartyAuthentication,
 } from '../bootstrap/state.js'
+import { resolveModelProviderKind } from '../providers/protocols.js'
 import {
   getMockSubscriptionType,
   shouldUseMockSubscription,
@@ -98,6 +99,10 @@ function isManagedOAuthContext(): boolean {
 /** Whether we are supporting direct 1P auth. */
 // this code is closely related to getAuthTokenSource
 export function isAnthropicAuthEnabled(): boolean {
+  if (resolveModelProviderKind() !== 'claude') {
+    return false
+  }
+
   // --bare: API-key-only, never OAuth.
   if (isBareMode()) return false
 
@@ -151,6 +156,7 @@ export function isAnthropicAuthEnabled(): boolean {
 /** Where the auth token is being sourced from, if any. */
 // this code is closely related to isAnthropicAuthEnabled
 export function getAuthTokenSource() {
+  const providerKind = resolveModelProviderKind()
   // --bare: API-key-only. apiKeyHelper (from --settings) is the only
   // bearer-token-shaped source allowed. OAuth env vars, FD tokens, and
   // keychain are ignored.
@@ -159,6 +165,10 @@ export function getAuthTokenSource() {
       return { source: 'apiKeyHelper' as const, hasToken: true }
     }
     return { source: 'none' as const, hasToken: false }
+  }
+
+  if (providerKind === 'minimax' && process.env.MINIMAX_API_KEY && !isManagedOAuthContext()) {
+    return { source: 'MINIMAX_API_KEY' as const, hasToken: true }
   }
 
   if (process.env.ANTHROPIC_AUTH_TOKEN && !isManagedOAuthContext()) {
@@ -207,6 +217,7 @@ export function getAuthTokenSource() {
 
 export type ApiKeySource =
   | 'ANTHROPIC_API_KEY'
+  | 'MINIMAX_API_KEY'
   | 'apiKeyHelper'
   | '/login managed key'
   | 'none'
@@ -220,7 +231,7 @@ export function hasAnthropicApiKeyAuth(): boolean {
   const { key, source } = getAnthropicApiKeyWithSource({
     skipRetrievingKeyFromApiKeyHelper: true,
   })
-  return key !== null && source !== 'none'
+  return key !== null && source !== 'none' && source !== 'MINIMAX_API_KEY'
 }
 
 export function getAnthropicApiKeyWithSource(
@@ -229,6 +240,15 @@ export function getAnthropicApiKeyWithSource(
   key: null | string
   source: ApiKeySource
 } {
+  const providerKind = resolveModelProviderKind()
+
+  if (providerKind === 'minimax') {
+    const minimaxApiKey = process.env.MINIMAX_API_KEY
+    if (minimaxApiKey) {
+      return { key: minimaxApiKey, source: 'MINIMAX_API_KEY' }
+    }
+  }
+
   // --bare: hermetic auth. Only ANTHROPIC_API_KEY env or apiKeyHelper from
   // the --settings flag. Never touches keychain, config file, or approval
   // lists. 3P (Bedrock/Vertex/Foundry) uses provider creds, not this path.
@@ -1321,6 +1341,17 @@ export const getClaudeAIOAuthTokens = memoize((): OAuthTokens | null => {
 export function clearOAuthTokenCache(): void {
   getClaudeAIOAuthTokens.cache?.clear?.()
   clearKeychainCache()
+}
+
+/**
+ * Clears all Anthropic/Claude auth caches without deleting persisted credentials.
+ * Use this when switching provider families so stale in-memory auth state
+ * cannot leak into the newly selected path.
+ */
+export function clearAnthropicAuthCaches(): void {
+  clearOAuthTokenCache()
+  clearApiKeyHelperCache()
+  clearLegacyApiKeyPrefetch()
 }
 
 let lastCredentialsMtimeMs = 0

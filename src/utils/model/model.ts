@@ -6,6 +6,9 @@
  * during dead code elimination
  */
 import { getMainLoopModelOverride } from '../../bootstrap/state.js'
+import { resolveOpenAICompatibleConfig } from '../../providers/openai-compatible/config.js'
+import { resolveMiniMaxConfig } from '../../providers/minimax.js'
+import { resolveModelProviderKind } from '../../providers/protocols.js'
 import {
   getSubscriptionType,
   isClaudeAISubscriber,
@@ -33,6 +36,10 @@ export type ModelShortName = string
 export type ModelName = string
 export type ModelSetting = ModelName | ModelAlias | null
 
+function isMiniMaxModel(model: string | null | undefined): boolean {
+  return typeof model === 'string' && model.toLowerCase().startsWith('minimax-')
+}
+
 export function getSmallFastModel(): ModelName {
   return process.env.ANTHROPIC_SMALL_FAST_MODEL || getDefaultHaikuModel()
 }
@@ -59,14 +66,44 @@ export function isNonCustomOpusModel(model: ModelName): boolean {
  * 4. Settings (from user's saved settings)
  */
 export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
-  let specifiedModel: ModelSetting | undefined
-
+  const providerKind = resolveModelProviderKind()
   const modelOverride = getMainLoopModelOverride()
+  const openAICompatibleConfig = resolveOpenAICompatibleConfig()
+  const miniMaxConfig = resolveMiniMaxConfig()
+
+  if (providerKind === 'openai-compatible') {
+    return openAICompatibleConfig?.model ?? modelOverride ?? undefined
+  }
+
+  if (providerKind === 'minimax') {
+    const specifiedMiniMax =
+      miniMaxConfig?.model ??
+      (isMiniMaxModel(modelOverride) ? modelOverride : undefined) ??
+      (isMiniMaxModel(process.env.ANTHROPIC_MODEL)
+        ? process.env.ANTHROPIC_MODEL
+        : undefined)
+    if (specifiedMiniMax) {
+      return specifiedMiniMax
+    }
+  }
+
+  let specifiedModel: ModelSetting | undefined
   if (modelOverride !== undefined) {
     specifiedModel = modelOverride
   } else {
     const settings = getSettings_DEPRECATED() || {}
     specifiedModel = process.env.ANTHROPIC_MODEL || settings.model || undefined
+  }
+
+  if (providerKind === 'claude' && isMiniMaxModel(specifiedModel)) {
+    return undefined
+  }
+  if (
+    providerKind === 'claude' &&
+    openAICompatibleConfig?.model &&
+    specifiedModel === openAICompatibleConfig.model
+  ) {
+    return undefined
   }
 
   // Ignore the user-specified model if it's not in the availableModels allowlist.
@@ -148,6 +185,8 @@ export function getRuntimeMainLoopModel(params: {
   exceeds200kTokens?: boolean
 }): ModelName {
   const { permissionMode, mainLoopModel, exceeds200kTokens = false } = params
+  const providerKind = resolveModelProviderKind()
+  const miniMaxConfig = resolveMiniMaxConfig()
 
   // opusplan uses Opus in plan mode without [1m] suffix.
   if (
@@ -161,6 +200,10 @@ export function getRuntimeMainLoopModel(params: {
   // sonnetplan by default
   if (getUserSpecifiedModelSetting() === 'haiku' && permissionMode === 'plan') {
     return getDefaultSonnetModel()
+  }
+
+  if (providerKind === 'minimax' && miniMaxConfig) {
+    return parseUserSpecifiedModel(miniMaxConfig.model)
   }
 
   return mainLoopModel

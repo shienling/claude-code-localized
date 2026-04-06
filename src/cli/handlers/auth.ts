@@ -255,6 +255,8 @@ export async function authStatus(opts: {
     authMethod = 'claude.ai'
   } else if (authTokenSource === 'apiKeyHelper') {
     authMethod = 'api_key_helper'
+  } else if (authTokenSource === 'MINIMAX_API_KEY') {
+    authMethod = 'api_key'
   } else if (authTokenSource !== 'none') {
     authMethod = 'oauth_token'
   } else if (apiKeySource === 'ANTHROPIC_API_KEY' || hasApiKeyEnvVar) {
