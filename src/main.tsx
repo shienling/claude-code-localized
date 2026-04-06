@@ -1399,7 +1399,7 @@ async function run(): Promise<CommanderCommand> {
       notification: permissionModeNotification
     } = initialPermissionModeFromCLI({
       permissionModeCli,
-      dangerouslySkipPermissions
+      dangerouslySkipPermissions: finalAllowDangerouslySkipPermissions
     });
 
     // Store session bypass permissions mode for trust dialog check

@@ -1032,6 +1032,18 @@ export function checkReadPermissionForTool(
   input: { [key: string]: unknown },
   toolPermissionContext: ToolPermissionContext,
 ): PermissionDecision {
+  // Check if in bypassPermissions mode
+  if (toolPermissionContext.mode === 'bypassPermissions') {
+    return {
+      behavior: 'allow',
+      updatedInput: input,
+      decisionReason: {
+        type: 'mode',
+        mode: 'bypassPermissions',
+      },
+    }
+  }
+
   if (typeof tool.getPath !== 'function') {
     return {
       behavior: 'ask',
@@ -1208,6 +1220,18 @@ export function checkWritePermissionForTool<Input extends AnyObject>(
   toolPermissionContext: ToolPermissionContext,
   precomputedPathsToCheck?: readonly string[],
 ): PermissionDecision {
+  // Check if in bypassPermissions mode
+  if (toolPermissionContext.mode === 'bypassPermissions') {
+    return {
+      behavior: 'allow',
+      updatedInput: input,
+      decisionReason: {
+        type: 'mode',
+        mode: 'bypassPermissions',
+      },
+    }
+  }
+
   if (typeof tool.getPath !== 'function') {
     return {
       behavior: 'ask',
