@@ -13,6 +13,7 @@ A **locally runnable version** repaired from the leaked Claude Code source, with
 ## Table of Contents
 
 - [Features](#features)
+- [Beacon Delivery Flow](#beacon-delivery-flow)
 - [Architecture Overview](#architecture-overview)
 - [Quick Start](#quick-start)
 - [Environment Variables](#environment-variables)
@@ -32,11 +33,119 @@ A **locally runnable version** repaired from the leaked Claude Code source, with
 - MCP server, plugin, and Skills support
 - Custom API endpoint and model support ([Third-Party Models Guide](docs/third-party-models.en.md))
 - **Computer Use desktop control** (screenshots, mouse, keyboard, app management) — [Guide](docs/computer-use.en.md)
+- **Beacon delivery flow** (clarification → proposal → explicit approval → parallel implementation → verification)
 - Fallback Recovery CLI mode
 
 > **Computer Use Note**: This project includes a **modified version of Computer Use**. The official implementation relies on Anthropic's private native modules. We replaced the entire underlying operation layer with a Python bridge (`pyautogui` + `mss` + `pyobjc`), enabling anyone to use Computer Use on macOS. See the [Computer Use Guide](docs/computer-use.en.md) for details.
 
 ---
+
+## Beacon Delivery Flow
+
+Beacon is a structured six-stage delivery loop for work that needs clear requirements, risk boundaries, and acceptance criteria. It combines **OpenSpec** (documentation), **Superpowers** (workflow discipline), and **Oh-My-Agent** (role collaboration), and adds dedicated security threat modeling plus a three-gate QA closeout.
+
+```bash
+# Start Beacon
+claude
+> /beacon implement a user login feature
+
+# Or continue from an existing OpenSpec document
+> /beacon docs/proposal.md
+
+# You can also paste a very long requirement directly
+> /beacon # Personal bookkeeping app
+```
+
+### Six Stages
+
+| Stage | State | Description |
+|------|------|------|
+| **Clarification** | `clarifying` | Ask proactive questions and resolve ambiguity |
+| **Proposal** | `awaiting_approval` | Fill the OpenSpec docs and wait for confirmation |
+| **Explicit Approval** | - | User must clearly say "start development" |
+| **Coordination** | `coordinating` | PM plans work and coordination |
+| **Parallel Implementation** | `implementing` | Frontend/backend run in parallel |
+| **Verification** | `verifying` | QA verifies and writes the acceptance report |
+| **Closeout** | `completed` | Keep the final evidence and stop rewriting |
+
+### Approval Gate
+
+Implementation only starts after an explicit confirmation:
+
+```text
+start development / confirm start / start / continue development
+```
+
+> ⚠️ **Superpowers discipline**: Beacon cannot jump straight into coding. It must go through clarification and approval first.
+
+### OpenSpec Artifacts
+
+Beacon creates the standard docs under `openspec/changes/<change-id>/`. To support very long pasted requirements, `<change-id>` is now a short directory name plus a short hash, so the full requirement text is never used as a path segment.
+
+| File | Purpose |
+|------|---------|
+| `overview.md` | Overview + execution-state tracking |
+| `proposal.md` | Change proposal |
+| `design.md` | Technical design |
+| `tasks.md` | Task breakdown |
+| `frontend/proposal.md` | Frontend proposal |
+| `backend/proposal.md` | Backend proposal |
+| `review/architecture-review.md` | Architecture review |
+| `review/backend-audit.md` | Backend audit |
+| `review/security-threat-model.md` | Security threat model |
+| `review/security-audit.md` | Security audit |
+| `review/risk-register.md` | Risk register |
+| `review/backend-question-bank.md` | Backend question bank |
+| `review/security-question-bank.md` | Security question bank |
+| `qa/proposal.md` | QA proposal |
+| `qa/acceptance.md` | QA acceptance report |
+
+### Execution Markers
+
+`overview.md` state flow:
+
+```yaml
+clarification_gate: pending → ready     # Clarification complete
+coordination_brief: pending → ready     # PM planning complete
+review_status: pending → in_progress → completed     # Architecture/backend review complete
+security_status: pending → in_progress → completed    # Security review complete
+frontend_handoff: pending → ready       # Frontend handoff complete
+backend_handoff: pending → ready        # Backend handoff complete
+qa_status: pending → in_progress → completed  # QA closeout complete
+```
+
+### Role Collaboration
+
+| Role | Responsibility |
+|------|----------------|
+| **pm/planner** | Confirm dependency order, parallelism, and the definition of done |
+| **architecture-reviewer** | Review feasibility, hidden coupling, and scope boundaries |
+| **backend-auditor** | Review backend contracts, concurrency, recovery, and performance risks |
+| **security-threat-modeler** | Model attack surface, trust boundaries, and abuse scenarios |
+| **security-auditor** | Review auth, authorization, sessions, and abuse resistance |
+| **senior-reviewer** | Synthesize review results into blocker / warning / note decisions |
+| **frontend** | UI, forms, validation, and user flows |
+| **backend** | API, data changes, and validation logic |
+| **qa** | Verify behavior, run tests, and record results |
+
+### Superpowers Discipline
+
+| Stage | Required behavior |
+|------|-------------------|
+| **clarifying** | `brainstorming` - ask proactive questions and resolve ambiguity |
+| **awaiting_approval** | `writing-plans` - do not code yet, wait for explicit confirmation |
+| **coordinating** | `subagent-driven-development` - plan parallel role work |
+| **implementing** | `test-driven-development` - delegate work to role workers |
+| **verifying** | `verification-before-completion` - evidence is mandatory, and all three gates must pass |
+| **completed** | Preserve final evidence and do not silently expand the change |
+
+### Key Operating Rules
+
+- `change-id` is short and hash-based; the full pasted requirement only lives in the markdown content, not in the path.
+- Each writable file has exactly one owner. Never let two workers write the same `proposal.md`, `review/*.md`, or `acceptance.md` in parallel.
+- `frontend` and `backend` are dispatched in the same turn by default. The main thread should not wait for one before launching the other.
+- QA must satisfy three gates: build passes, API smoke tests pass, and page-level contract checks pass.
+- If review finds a blocker, Beacon routes the change back to the responsible owner to revise the markdown instead of forcing implementation forward.
 
 ## Architecture Overview
 
