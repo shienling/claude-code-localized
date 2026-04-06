@@ -12,6 +12,7 @@ import {
   getAcceptanceGuideBlock,
   getExecutionStatusGuideBlock,
   getProposalTemplateBlock,
+  isImplementationHandoffComplete,
   getReviewTemplateBlock,
   getReviewGuideBlock,
   getBackendQuestionBankBlock,
@@ -424,7 +425,7 @@ function getBeaconTaskTemplates(
       deliverables: [
         'files changed',
         'tests/checks run',
-        'anything blocked or still dependent on backend work',
+        'Implementation Handoff summary with blockers, checks, and final readiness',
       ],
       executionStatusUpdate: {
         path: state.overviewPath,
@@ -432,6 +433,9 @@ function getBeaconTaskTemplates(
         value: 'ready',
         when: 'after the frontend handoff is ready for QA and the main thread',
       },
+      constraints: [
+        'Complete the Implementation Handoff section in frontend/proposal.md before marking the handoff ready.',
+      ],
     },
     {
       role: 'backend',
@@ -459,7 +463,7 @@ function getBeaconTaskTemplates(
       deliverables: [
         'files changed',
         'tests/checks run',
-        'follow-up items QA or frontend should know about',
+        'Implementation Handoff summary with blockers, checks, and final readiness',
       ],
       executionStatusUpdate: {
         path: state.overviewPath,
@@ -467,6 +471,9 @@ function getBeaconTaskTemplates(
         value: 'ready',
         when: 'after the backend handoff is ready for QA and the main thread',
       },
+      constraints: [
+        'Complete the Implementation Handoff section in backend/proposal.md before marking the handoff ready.',
+      ],
     },
     {
       role: 'qa',
@@ -1419,6 +1426,13 @@ export async function prepareBeaconSessionState(
 ): Promise<BeaconSessionState> {
   const workspace = await scaffoldWorkspace(args, cwd, fallbackProjectRoot)
   const docs = await normalizeBeaconWorkspaceDocs(workspace)
+  let nextOverview = docs.overview
+  const frontendReady =
+    isImplementationHandoffComplete(docs.frontendProposal) ||
+    readExecutionStatusMarker(nextOverview, 'frontend_handoff') === 'ready'
+  const backendReady =
+    isImplementationHandoffComplete(docs.backendProposal) ||
+    readExecutionStatusMarker(nextOverview, 'backend_handoff') === 'ready'
   const reviewReady =
     isReviewComplete(docs.reviewArchitecture, 'architecture-review') &&
     isReviewComplete(docs.reviewBackendAudit, 'backend-audit') &&
@@ -1431,23 +1445,44 @@ export async function prepareBeaconSessionState(
   if (
     reviewReady &&
     securityReady &&
-    readExecutionStatusMarker(docs.overview, 'review_status') !== 'completed'
+    readExecutionStatusMarker(nextOverview, 'review_status') !== 'completed'
   ) {
-    const reviewedOverview = updateExecutionStatusMarker(
-      docs.overview,
+    nextOverview = updateExecutionStatusMarker(
+      nextOverview,
       'review_status',
       'completed',
     )
-    await writeFile(workspace.overviewPath, reviewedOverview, 'utf8')
   }
 
-  if (securityReady && readExecutionStatusMarker(docs.overview, 'security_status') !== 'completed') {
-    const securedOverview = updateExecutionStatusMarker(
-      docs.overview,
+  if (
+    securityReady &&
+    readExecutionStatusMarker(nextOverview, 'security_status') !== 'completed'
+  ) {
+    nextOverview = updateExecutionStatusMarker(
+      nextOverview,
       'security_status',
       'completed',
     )
-    await writeFile(workspace.overviewPath, securedOverview, 'utf8')
+  }
+
+  if (frontendReady && readExecutionStatusMarker(nextOverview, 'frontend_handoff') !== 'ready') {
+    nextOverview = updateExecutionStatusMarker(
+      nextOverview,
+      'frontend_handoff',
+      'ready',
+    )
+  }
+
+  if (backendReady && readExecutionStatusMarker(nextOverview, 'backend_handoff') !== 'ready') {
+    nextOverview = updateExecutionStatusMarker(
+      nextOverview,
+      'backend_handoff',
+      'ready',
+    )
+  }
+
+  if (nextOverview !== docs.overview) {
+    await writeFile(workspace.overviewPath, nextOverview, 'utf8')
   }
 
   return {
@@ -1575,8 +1610,12 @@ async function getBeaconWorkspaceProgress(
     !containsPlaceholder(reviewSecurityQuestionBank, ['TBD', 'Pending clarification'])
   const clarificationReady = readClarificationGateMarker(overview) === 'ready'
   const coordinationReady = readExecutionStatusMarker(overview, 'coordination_brief') === 'ready'
-  const frontendReady = readExecutionStatusMarker(overview, 'frontend_handoff') === 'ready'
-  const backendReady = readExecutionStatusMarker(overview, 'backend_handoff') === 'ready'
+  const frontendReady =
+    readExecutionStatusMarker(overview, 'frontend_handoff') === 'ready' ||
+    isImplementationHandoffComplete(frontend)
+  const backendReady =
+    readExecutionStatusMarker(overview, 'backend_handoff') === 'ready' ||
+    isImplementationHandoffComplete(backend)
   const implementationReady = frontendReady && backendReady
 
   return {

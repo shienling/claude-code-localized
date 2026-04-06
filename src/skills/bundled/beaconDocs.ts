@@ -17,6 +17,7 @@ export type BeaconExecutionStatusValue =
 export type BeaconClarificationGateValue = 'pending' | 'ready'
 
 type ProposalKind = 'frontend' | 'backend' | 'qa'
+type ImplementationHandoffKind = 'frontend' | 'backend'
 
 export type BeaconWorkspaceDocs = {
   overview: string
@@ -71,6 +72,35 @@ export function containsPlaceholder(
   placeholders: string[],
 ): boolean {
   return placeholders.some(placeholder => content.includes(placeholder))
+}
+
+function getSectionBody(content: string, heading: string): string {
+  const lines = content.split(/\r?\n/)
+  const startIndex = lines.findIndex(line => line.trim() === `## ${heading}`)
+
+  if (startIndex === -1) return ''
+
+  const body: string[] = []
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (/^##\s+/.test(line)) break
+    body.push(line)
+  }
+
+  return body.join('\n').trim()
+}
+
+function sectionHasEvidence(content: string, heading: string): boolean {
+  const body = getSectionBody(content, heading)
+  if (!body) return false
+  if (containsPlaceholder(body, ['Pending implementation', 'Pending verification', 'TBD'])) {
+    return false
+  }
+
+  return body.split(/\r?\n/).some(line => {
+    const trimmed = line.trim()
+    return Boolean(trimmed) && !trimmed.startsWith('- TBD')
+  })
 }
 
 export function getExecutionStatusGuideBlock(): string {
@@ -170,6 +200,7 @@ export function getProposalTemplateBlock(kind: ProposalKind): string {
       `## Edge Cases / Error States\n- TBD\n\n` +
       `## Accessibility / Performance\n- TBD\n\n` +
       `## Acceptance Notes\n- TBD\n\n` +
+      `## Implementation Handoff\n- Pending handoff\n\n` +
       `## Open Questions\n- TBD\n\n` +
       `${getProposalGuideBlock('frontend')}`
     )
@@ -191,6 +222,7 @@ export function getProposalTemplateBlock(kind: ProposalKind): string {
       `## Logging / Metrics / Observability\n- TBD\n\n` +
       `## Rollout / Recovery\n- TBD\n\n` +
       `## Acceptance Notes\n- TBD\n\n` +
+      `## Implementation Handoff\n- Pending handoff\n\n` +
       `## Open Questions\n- TBD\n\n` +
       `${getProposalGuideBlock('backend')}`
     )
@@ -213,6 +245,54 @@ export function getProposalTemplateBlock(kind: ProposalKind): string {
     `## Open Questions\n- TBD\n\n` +
     `${getProposalGuideBlock('qa')}`
   )
+}
+
+export function ensureImplementationHandoffSection(
+  content: string,
+  kind: ImplementationHandoffKind,
+): string {
+  if (/^## Implementation Handoff$/m.test(content)) {
+    return content
+  }
+
+  const guide =
+    kind === 'frontend'
+      ? '- Fill this section only after the frontend worker has finished the implementation handoff and checks.'
+      : '- Fill this section only after the backend worker has finished the implementation handoff and checks.'
+
+  const section =
+    `## Implementation Handoff\n` +
+    `- Pending handoff\n` +
+    `- Files changed: TBD\n` +
+    `- Checks run: TBD\n` +
+    `- Blockers: TBD\n` +
+    `- Handoff summary: TBD\n\n` +
+    `## Handoff Guide\n` +
+    `${guide}\n\n`
+
+  const anchor = /^## Open Questions$/m
+  if (anchor.test(content)) {
+    return content.replace(anchor, `${section}## Open Questions`)
+  }
+
+  return `${content.trimEnd()}\n\n${section}`.trimEnd() + '\n'
+}
+
+export function isImplementationHandoffComplete(
+  content: string,
+): boolean {
+  if (!content.trim()) return false
+
+  if (!hasRequiredHeadings(content, ['Implementation Handoff'])) {
+    return false
+  }
+
+  return !containsPlaceholder(content, [
+    'Pending handoff',
+    'TBD',
+    'Pending clarification',
+    'Pending implementation',
+  ])
 }
 
 export function getAcceptanceGuideBlock(): string {
@@ -813,7 +893,16 @@ export function isAcceptanceInProgress(content: string): boolean {
     return false
   }
 
-  return !containsPlaceholder(content, ['Pending implementation'])
+  return (
+    sectionHasEvidence(content, 'Build Check') &&
+    sectionHasEvidence(content, 'API Smoke Test') &&
+    sectionHasEvidence(content, 'Page Contract Check') &&
+    sectionHasEvidence(content, 'Tests Run') &&
+    sectionHasEvidence(content, 'Verified') &&
+    sectionHasEvidence(content, 'Unverified') &&
+    sectionHasEvidence(content, 'Acceptance Summary') &&
+    !containsPlaceholder(content, ['Pending implementation'])
+  )
 }
 
 export function isAcceptanceComplete(content: string): boolean {
@@ -938,8 +1027,16 @@ export async function normalizeBeaconWorkspaceDocs(
     frontendProposal,
     'frontend',
   )
+  const normalizedFrontendWithHandoff = ensureImplementationHandoffSection(
+    normalizedFrontend,
+    'frontend',
+  )
   const normalizedBackend = ensureProposalGuideSection(
     backendProposal,
+    'backend',
+  )
+  const normalizedBackendWithHandoff = ensureImplementationHandoffSection(
+    normalizedBackend,
     'backend',
   )
   const normalizedQa = ensureProposalGuideSection(qaProposal, 'qa')
@@ -1006,12 +1103,12 @@ export async function normalizeBeaconWorkspaceDocs(
     rewriteFileIfChanged(
       state.frontendProposalPath,
       frontendProposal,
-      normalizedFrontend,
+      normalizedFrontendWithHandoff,
     ),
     rewriteFileIfChanged(
       state.backendProposalPath,
       backendProposal,
-      normalizedBackend,
+      normalizedBackendWithHandoff,
     ),
     rewriteFileIfChanged(state.qaProposalPath, qaProposal, normalizedQa),
     rewriteFileIfChanged(
