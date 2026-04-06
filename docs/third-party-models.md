@@ -1,19 +1,36 @@
-# 使用第三方模型（OpenAI / DeepSeek / 本地模型）
+# 使用第三方模型（协议分流总览）
 
-本项目基于 Anthropic 协议与 LLM 通信。通过协议转换代理，可以使用 OpenAI、DeepSeek、Ollama 等任意模型。
+本项目现在有两条模型接入路径：
+
+- **Anthropic-compatible 主路径**：继续沿用现有 Anthropic SDK，请求形状是 Anthropic Messages API。MiniMax、OpenRouter，以及通过 LiteLLM 暴露出 `/v1/messages` 的服务都走这条路。
+- **OpenAI-compatible 独立路径**：Ark 以及其他只提供 `chat/completions` 的服务走独立适配器，不复用 `ANTHROPIC_*` 配置。
+
+## 兼容性矩阵
+
+| 路径 | 适用服务 | 需要的 env | 鉴权方式 | 流式 / tool call | 已知限制 |
+|------|----------|-----------|----------|------------------|----------|
+| Anthropic-compatible 主路径 | Anthropic 官方、MiniMax、OpenRouter、LiteLLM 转发后的服务 | `ANTHROPIC_*` | `x-api-key` 或 `Authorization: Bearer`，取决于具体服务 | 沿用现有 Anthropic 流式与工具调用管线 | 适合原生支持 Anthropic Messages API 的服务；如果目标服务只支持 OpenAI 协议，需要先做协议转换 |
+| OpenAI-compatible 独立路径 | Ark，以及其他只提供 OpenAI Chat Completions 的服务 | `ARK_*` + `MODEL_PROTOCOL_FAMILY=openai-compatible` | `Authorization: Bearer` | 走独立 OpenAI-compatible 适配器，支持流式回退 | 不复用 `ANTHROPIC_*`，也不假设 Anthropic 专有参数存在 |
+
+如果模型供应商原生支持 Anthropic Messages API，或者你已经通过 LiteLLM 把它转换成 Anthropic-compatible 端点，优先走主路径。
+如果供应商只支持 OpenAI Chat Completions，就走 Ark 这条独立通道，或者复用同类 OpenAI-compatible 适配器。
 
 ## 原理
 
 ```
+Anthropic-compatible 主路径:
 claude-code-haha ──Anthropic协议──▶ LiteLLM Proxy ──OpenAI协议──▶ 目标模型 API
                                       (协议转换)
+
+OpenAI-compatible 独立路径:
+claude-code-haha ──OpenAI Chat Completions──▶ Ark / OpenAI-compatible API
 ```
 
-本项目发出 Anthropic Messages API 请求，LiteLLM 代理将其自动转换为 OpenAI Chat Completions API 格式并转发给目标模型。
+主路径会发出 Anthropic Messages API 请求，LiteLLM 代理将其自动转换为 OpenAI Chat Completions API 格式并转发给目标模型。Ark 路径则直接使用 OpenAI-compatible 请求形状。
 
 ---
 
-## 方式一：LiteLLM 代理（推荐）
+## 方式一：Anthropic-compatible 主路径（LiteLLM 代理）
 
 [LiteLLM](https://github.com/BerriAI/litellm) 是一个支持 100+ LLM 的统一代理网关（41k+ GitHub Stars），原生支持接收 Anthropic 协议请求。
 
@@ -183,6 +200,21 @@ API_TIMEOUT_MS=3000000
 DISABLE_TELEMETRY=1
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ```
+
+### Ark / OpenAI-compatible（新的独立入口）
+
+Ark 这类只兼容 OpenAI Chat Completions 的服务，不要复用 MiniMax 的 Anthropic-compatible 配置。
+在登录界面里可以直接选择 `Ark`，然后填模型名和 API key。
+如果你想在 `/model` 里手动配置其他 OpenAI-compatible 服务，也可以先选 `Others`，再依次填写 API 地址、模型名和 API key。
+
+```env
+ARK_API_KEY=your_ark_api_key
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ARK_MODEL=doubao-seed-2-0-code-preview-260215
+MODEL_PROTOCOL_FAMILY=openai-compatible
+```
+
+如果后续你接的是别的 OpenAI-compatible 服务，也建议走同一条独立通道，而不是塞回 `ANTHROPIC_*`。
 
 ---
 

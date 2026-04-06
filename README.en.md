@@ -2,7 +2,7 @@
 
 <p align="right"><a href="./README.md">中文</a> | <strong>English</strong></p>
 
-A **locally runnable version** repaired from the leaked Claude Code source, with support for any Anthropic-compatible API endpoint such as MiniMax and OpenRouter.
+A **locally runnable version** repaired from the leaked Claude Code source, with support for Anthropic-compatible API endpoints such as MiniMax and OpenRouter, plus a separate Ark / OpenAI-compatible path for services that only expose Chat Completions.
 
 > The original leaked source does not run as-is. This repository fixes multiple blocking issues in the startup path so the full Ink TUI can work locally.
 
@@ -214,7 +214,7 @@ Copy the example file and fill in your API key:
 cp .env.example .env
 ```
 
-Edit `.env` (the example below uses [MiniMax](https://platform.minimaxi.com/subscribe/token-plan?code=1TG2Cseab2&source=link) as the API provider — you can replace it with any compatible service):
+Edit `.env` (the example below uses [MiniMax](https://platform.minimaxi.com/subscribe/token-plan?code=1TG2Cseab2&source=link) as the API provider — you can replace it with any Anthropic-compatible service):
 
 ```env
 # API authentication (choose one)
@@ -251,6 +251,8 @@ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 > ```
 >
 > Priority: Environment variables > `.env` file > `~/.claude/settings.json`
+
+> **Ark note**: If you want to use Ark, choose the `Ark` entry in the login flow or set `ARK_*` plus `MODEL_PROTOCOL_FAMILY=openai-compatible`. Do not reuse `ANTHROPIC_*` for that path.
 
 ### 4. Start
 
@@ -391,7 +393,7 @@ src/
 | Language | TypeScript |
 | Terminal UI | React + [Ink](https://github.com/vadimdemedes/ink) |
 | CLI parsing | Commander.js |
-| API | Anthropic SDK |
+| API | Anthropic SDK / OpenAI-compatible adapter |
 | Protocols | MCP, LSP |
 
 ---
@@ -400,11 +402,12 @@ src/
 
 ### Q: `undefined is not an object (evaluating 'usage.input_tokens')`
 
-**Cause**: `ANTHROPIC_BASE_URL` is misconfigured. The API endpoint is returning HTML or another non-JSON format instead of a valid Anthropic protocol response.
+**Cause**: `ANTHROPIC_BASE_URL` is misconfigured, or an OpenAI-compatible service was attached to the Anthropic main path by mistake.
 
-This project uses the **Anthropic Messages API protocol**. `ANTHROPIC_BASE_URL` must point to an endpoint compatible with Anthropic's `/v1/messages` interface. The Anthropic SDK automatically appends `/v1/messages` to the base URL, so:
+The main request path uses the **Anthropic Messages API protocol**. `ANTHROPIC_BASE_URL` must point to an endpoint compatible with Anthropic's `/v1/messages` interface. The Anthropic SDK automatically appends `/v1/messages` to the base URL, so:
 
 - MiniMax: `ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic` ✅
+- Ark: use the login flow's `Ark` entry, which goes through the OpenAI-compatible path ✅
 - OpenRouter: `ANTHROPIC_BASE_URL=https://openrouter.ai/api` ✅
 - OpenRouter (wrong): `ANTHROPIC_BASE_URL=https://openrouter.ai/anthropic` ❌ (returns HTML)
 
@@ -426,7 +429,9 @@ bun upgrade
 
 ### Q: How to use OpenAI / DeepSeek / Ollama or other non-Anthropic models?
 
-This project only supports the Anthropic protocol. If your model provider doesn't natively support the Anthropic protocol, you need a proxy like [LiteLLM](https://github.com/BerriAI/litellm) for protocol translation (OpenAI → Anthropic).
+If your provider natively supports Anthropic-compatible requests, you can keep using the main path. If it only supports OpenAI-compatible Chat Completions, use the login flow's `Ark` entry or another OpenAI-compatible adapter.
+
+If you want to funnel OpenAI / DeepSeek / Ollama models into the main path, you can still use a proxy like [LiteLLM](https://github.com/BerriAI/litellm) for protocol translation (OpenAI → Anthropic).
 
 See the [Third-Party Models Guide](docs/third-party-models.en.md) for detailed setup instructions.
 

@@ -19,6 +19,7 @@ const validModelCache = new Map<string, boolean>()
  */
 export async function validateModel(
   model: string,
+  options?: { skipAllowlist?: boolean },
 ): Promise<{ valid: boolean; error?: string }> {
   const normalizedModel = model.trim()
 
@@ -28,7 +29,7 @@ export async function validateModel(
   }
 
   // Check against availableModels allowlist before any API call
-  if (!isModelAllowed(normalizedModel)) {
+  if (!options?.skipAllowlist && !isModelAllowed(normalizedModel)) {
     return {
       valid: false,
       error: `Model '${normalizedModel}' is not in the list of available models`,

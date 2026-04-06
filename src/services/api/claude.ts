@@ -24,6 +24,7 @@ import {
   getAPIProvider,
   isFirstPartyAnthropicBaseUrl,
 } from 'src/utils/model/providers.js'
+import { resolveModelProtocolFamily } from 'src/providers/protocols.js'
 import {
   getAttributionHeader,
   getCLISyspromptPrefix,
@@ -82,6 +83,7 @@ import {
   stripCallerFieldFromAssistantMessage,
   stripToolReferenceBlocksFromUserMessage,
 } from '../../utils/messages.js'
+import { queryOpenAICompatibleModel } from './openaiCompatibleQuery.js'
 import {
   getDefaultOpusModel,
   getDefaultSonnetModel,
@@ -1370,6 +1372,27 @@ async function* queryModel(
 
   // Prepend system prompt block for easy API identification
   logAPIPrefix(systemPrompt)
+
+  if (resolveModelProtocolFamily() === 'openai-compatible') {
+    yield* queryOpenAICompatibleModel({
+      messages,
+      systemPrompt,
+      model: options.model,
+      signal,
+      temperature: options.temperatureOverride,
+      maxOutputTokens:
+        options.maxOutputTokensOverride ??
+        getMaxOutputTokensForModel(options.model),
+      tools: toolSchemas as Array<{
+        name: string
+        description?: string
+        input_schema?: unknown
+        strict?: boolean
+      }>,
+      toolChoice: options.toolChoice,
+    })
+    return
+  }
 
   const enablePromptCaching =
     options.enablePromptCaching ?? getPromptCachingEnabled(options.model)

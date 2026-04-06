@@ -1,19 +1,36 @@
-# Using Third-Party Models (OpenAI / DeepSeek / Local Models)
+# Using Third-Party Models (Protocol Routing Overview)
 
-This project communicates with LLMs via the Anthropic protocol. By using a protocol translation proxy, you can use any model including OpenAI, DeepSeek, Ollama, etc.
+This project now has two model access paths:
+
+- **Anthropic-compatible main path**: keeps using the existing Anthropic SDK and Anthropic Messages API request shape. MiniMax, OpenRouter, and any service exposed through LiteLLM as `/v1/messages` use this path.
+- **OpenAI-compatible separate path**: Ark and other services that only expose `chat/completions` use an independent adapter and do not reuse `ANTHROPIC_*` settings.
+
+## Compatibility Matrix
+
+| Path | Typical services | Required env | Auth | Streaming / tool calls | Known limits |
+|------|------------------|--------------|------|-------------------------|--------------|
+| Anthropic-compatible main path | Anthropic, MiniMax, OpenRouter, LiteLLM-forwarded services | `ANTHROPIC_*` | `x-api-key` or `Authorization: Bearer`, depending on the service | Uses the existing Anthropic streaming and tool-call pipeline | Best for services that natively support Anthropic Messages API; if the service only supports OpenAI, you need protocol translation first |
+| OpenAI-compatible separate path | Ark and other services that only expose OpenAI Chat Completions | `ARK_*` + `MODEL_PROTOCOL_FAMILY=openai-compatible` | `Authorization: Bearer` | Uses the independent OpenAI-compatible adapter, with streaming fallback | Does not reuse `ANTHROPIC_*`, and does not assume Anthropic-specific params exist |
+
+If your provider natively supports Anthropic Messages API, or you already translated it into an Anthropic-compatible endpoint via LiteLLM, prefer the main path.
+If your provider only supports OpenAI Chat Completions, use the Ark path or another OpenAI-compatible adapter.
 
 ## How It Works
 
 ```
+Anthropic-compatible main path:
 claude-code-haha ──Anthropic protocol──▶ LiteLLM Proxy ──OpenAI protocol──▶ Target Model API
                                           (translation)
+
+OpenAI-compatible separate path:
+claude-code-haha ──OpenAI Chat Completions──▶ Ark / OpenAI-compatible API
 ```
 
-This project sends Anthropic Messages API requests. The LiteLLM proxy automatically translates them to OpenAI Chat Completions API format and forwards them to the target model.
+The main path sends Anthropic Messages API requests. The LiteLLM proxy automatically translates them to OpenAI Chat Completions API format and forwards them to the target model. The Ark path uses OpenAI-compatible request shapes directly.
 
 ---
 
-## Option 1: LiteLLM Proxy (Recommended)
+## Option 1: Anthropic-compatible Main Path (LiteLLM Proxy)
 
 [LiteLLM](https://github.com/BerriAI/litellm) is a unified proxy gateway supporting 100+ LLMs (41k+ GitHub Stars), with native support for receiving Anthropic protocol requests.
 
@@ -183,6 +200,20 @@ API_TIMEOUT_MS=3000000
 DISABLE_TELEMETRY=1
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ```
+
+### Ark / OpenAI-compatible (separate entry)
+
+Ark and other services that only support OpenAI Chat Completions should not reuse MiniMax's Anthropic-compatible configuration. In the login flow, choose `Ark`, then enter the model name and API key.
+If you want to configure another OpenAI-compatible service from `/model`, choose `Others`, then enter the API address, model name, and API key.
+
+```env
+ARK_API_KEY=your_ark_api_key
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ARK_MODEL=doubao-seed-2-0-code-preview-260215
+MODEL_PROTOCOL_FAMILY=openai-compatible
+```
+
+If you add another OpenAI-compatible service later, it should follow the same separate path instead of being pushed back into `ANTHROPIC_*`.
 
 ---
 

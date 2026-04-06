@@ -10,6 +10,7 @@ import { useKeybinding } from '../keybindings/useKeybinding.js';
 import { getSSLErrorHint } from '../services/api/errorUtils.js';
 import { sendNotification } from '../services/notifier.js';
 import { OAuthService } from '../services/oauth/index.js';
+import { createArkClient } from '../providers/ark.js';
 import { getOauthAccountInfo, validateForceLoginOrg } from '../utils/auth.js';
 import { saveGlobalConfig } from '../utils/config.js';
 import { logError } from '../utils/log.js';
@@ -22,7 +23,7 @@ type Props = {
   onDone(): void;
   startingMessage?: string;
   mode?: 'login' | 'setup-token';
-  forceLoginMethod?: 'claudeai' | 'console';
+  forceLoginMethod?: 'claudeai' | 'console' | 'ark';
 };
 type OAuthStatus = {
   state: 'idle';
@@ -39,6 +40,15 @@ type OAuthStatus = {
 | {
   state: 'minimax_api_key_input';
 } // Input MiniMax API key
+| {
+  state: 'ark_setup';
+} // Show Ark setup info
+| {
+  state: 'ark_model_input';
+} // Input Ark model
+| {
+  state: 'ark_api_key_input';
+} // Input Ark API key
 | {
   state: 'ready_to_start';
 } // Flow started, waiting for browser to open
@@ -70,12 +80,17 @@ export function ConsoleOAuthFlow({
   const settings = getSettings_DEPRECATED() || {};
   const forceLoginMethod = forceLoginMethodProp ?? settings.forceLoginMethod;
   const orgUUID = settings.forceLoginOrgUUID;
-  const forcedMethodMessage = forceLoginMethod === 'claudeai' ? 'Login method pre-selected: Subscription Plan (Claude Pro/Max)' : forceLoginMethod === 'console' ? 'Login method pre-selected: API Usage Billing (Anthropic Console)' : null;
+  const forcedMethodMessage = forceLoginMethod === 'claudeai' ? 'Login method pre-selected: Subscription Plan (Claude Pro/Max)' : forceLoginMethod === 'console' ? 'Login method pre-selected: API Usage Billing (Anthropic Console)' : forceLoginMethod === 'ark' ? 'Login method pre-selected: Ark / OpenAI-compatible' : null;
   const terminal = useTerminalNotification();
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>(() => {
     if (mode === 'setup-token') {
       return {
         state: 'ready_to_start'
+      };
+    }
+    if (forceLoginMethod === 'ark') {
+      return {
+        state: 'ark_setup'
       };
     }
     if (forceLoginMethod === 'claudeai' || forceLoginMethod === 'console') {
@@ -97,6 +112,10 @@ export function ConsoleOAuthFlow({
   const [minimaxApiKey, setMinimaxApiKey] = useState('');
   const [minimaxApiKeyCursorOffset, setMinimaxApiKeyCursorOffset] = useState(0);
   const [minimaxModel, setMinimaxModel] = useState('MiniMax-M2.7-highspeed');
+  const [arkApiKey, setArkApiKey] = useState('');
+  const [arkApiKeyCursorOffset, setArkApiKeyCursorOffset] = useState(0);
+  const [arkModel, setArkModel] = useState('doubao-seed-2-0-code-preview-260215');
+  const [arkModelCursorOffset, setArkModelCursorOffset] = useState(0);
   // After a few seconds we suggest the user to copy/paste url if the
   // browser did not open automatically. In this flow we expect the user to
   // copy the code from the browser and paste it in the terminal
@@ -110,6 +129,8 @@ export function ConsoleOAuthFlow({
       logEvent('tengu_oauth_claudeai_forced', {});
     } else if (forceLoginMethod === 'console') {
       logEvent('tengu_oauth_console_forced', {});
+    } else if (forceLoginMethod === 'ark') {
+      logEvent('tengu_oauth_ark_forced', {});
     }
   }, [forceLoginMethod]);
 
@@ -151,6 +172,17 @@ export function ConsoleOAuthFlow({
   }, {
     context: 'Confirmation',
     isActive: oauthStatus.state === 'minimax_setup'
+  });
+
+  // Handle Enter to continue from Ark setup
+  useKeybinding('confirm:yes', () => {
+    if (oauthStatus.state === 'ark_setup') {
+      logEvent('tengu_oauth_ark_selected', {});
+      setOAuthStatus({ state: 'ark_model_input' });
+    }
+  }, {
+    context: 'Confirmation',
+    isActive: oauthStatus.state === 'ark_setup'
   });
 
   // Handle numeric input for MiniMax region selection
@@ -246,7 +278,8 @@ export function ConsoleOAuthFlow({
           ANTHROPIC_MODEL: minimaxModel,
           ANTHROPIC_DEFAULT_SONNET_MODEL: minimaxModel,
           ANTHROPIC_DEFAULT_HAIKU_MODEL: minimaxModel,
-          ANTHROPIC_DEFAULT_OPUS_MODEL: minimaxModel
+          ANTHROPIC_DEFAULT_OPUS_MODEL: minimaxModel,
+          MODEL_PROTOCOL_FAMILY: 'anthropic-compatible',
         }
       }));
 
@@ -264,6 +297,102 @@ export function ConsoleOAuthFlow({
         message: (err as Error).message,
         toRetry: {
           state: 'minimax_api_key_input'
+        }
+      });
+    }
+  }
+
+  async function handleArkModelSubmit(value: string) {
+    try {
+      const model = value.trim()
+      if (!model) {
+        setOAuthStatus({
+          state: 'error',
+          message: 'Model name cannot be empty',
+          toRetry: {
+            state: 'ark_model_input'
+          }
+        });
+        return;
+      }
+
+      setArkModel(model);
+      setOAuthStatus({
+        state: 'ark_api_key_input'
+      });
+    } catch (err: unknown) {
+      logError(err);
+      setOAuthStatus({
+        state: 'error',
+        message: (err as Error).message,
+        toRetry: {
+          state: 'ark_model_input'
+        }
+      });
+    }
+  }
+
+  async function handleArkApiKeySubmit(value: string) {
+    try {
+      if (!value.trim()) {
+        setOAuthStatus({
+          state: 'error',
+          message: 'API key cannot be empty',
+          toRetry: {
+            state: 'ark_api_key_input'
+          }
+        });
+        return;
+      }
+
+      const arkClient = createArkClient({
+        ARK_API_KEY: value.trim(),
+        ARK_MODEL: arkModel,
+        ARK_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3',
+      })
+      if (!arkClient) {
+        throw new Error('Unable to initialize Ark client')
+      }
+
+      await arkClient.createChatCompletionFromAnthropicMessages(
+        [
+          {
+            role: 'user',
+            content: 'ping',
+          },
+        ],
+        {
+          max_tokens: 1,
+          temperature: 0,
+        },
+      )
+
+      // Save Ark API key to config
+      saveGlobalConfig(current => ({
+        ...current,
+        env: {
+          ...current.env,
+          ARK_API_KEY: value.trim(),
+          ARK_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3',
+          ARK_MODEL: arkModel,
+          MODEL_PROTOCOL_FAMILY: 'openai-compatible',
+        }
+      }));
+
+      setOAuthStatus({
+        state: 'success'
+      });
+      void sendNotification({
+        message: 'Ark API key set successfully',
+        notificationType: 'auth_success'
+      }, terminal);
+    } catch (err: unknown) {
+      logError(err);
+      setOAuthStatus({
+        state: 'error',
+        message: (err as Error).message,
+        toRetry: {
+          state: 'ark_api_key_input'
         }
       });
     }
@@ -407,7 +536,7 @@ export function ConsoleOAuthFlow({
             </Box>
           </Box>}
       <Box paddingLeft={1} flexDirection="column" gap={1}>
-        <OAuthStatusMessage oauthStatus={oauthStatus} mode={mode} startingMessage={startingMessage} forcedMethodMessage={forcedMethodMessage} showPastePrompt={showPastePrompt} pastedCode={pastedCode} setPastedCode={setPastedCode} cursorOffset={cursorOffset} setCursorOffset={setCursorOffset} textInputColumns={textInputColumns} handleSubmitCode={handleSubmitCode} setOAuthStatus={setOAuthStatus} setLoginWithClaudeAi={setLoginWithClaudeAi} minimaxApiKey={minimaxApiKey} setMinimaxApiKey={setMinimaxApiKey} minimaxApiKeyCursorOffset={minimaxApiKeyCursorOffset} setMinimaxApiKeyCursorOffset={setMinimaxApiKeyCursorOffset} handleMinimaxApiKeySubmit={handleMinimaxApiKeySubmit} minimaxModel={minimaxModel} setMinimaxModel={setMinimaxModel} />
+        <OAuthStatusMessage oauthStatus={oauthStatus} mode={mode} startingMessage={startingMessage} forcedMethodMessage={forcedMethodMessage} showPastePrompt={showPastePrompt} pastedCode={pastedCode} setPastedCode={setPastedCode} cursorOffset={cursorOffset} setCursorOffset={setCursorOffset} textInputColumns={textInputColumns} handleSubmitCode={handleSubmitCode} setOAuthStatus={setOAuthStatus} setLoginWithClaudeAi={setLoginWithClaudeAi} minimaxApiKey={minimaxApiKey} setMinimaxApiKey={setMinimaxApiKey} minimaxApiKeyCursorOffset={minimaxApiKeyCursorOffset} setMinimaxApiKeyCursorOffset={setMinimaxApiKeyCursorOffset} handleMinimaxApiKeySubmit={handleMinimaxApiKeySubmit} minimaxModel={minimaxModel} setMinimaxModel={setMinimaxModel} arkApiKey={arkApiKey} setArkApiKey={setArkApiKey} arkApiKeyCursorOffset={arkApiKeyCursorOffset} setArkApiKeyCursorOffset={setArkApiKeyCursorOffset} arkModel={arkModel} setArkModel={setArkModel} arkModelCursorOffset={arkModelCursorOffset} setArkModelCursorOffset={setArkModelCursorOffset} handleArkModelSubmit={handleArkModelSubmit} handleArkApiKeySubmit={handleArkApiKeySubmit} />
       </Box>
     </Box>;
 }
@@ -432,9 +561,19 @@ type OAuthStatusMessageProps = {
   handleMinimaxApiKeySubmit: (value: string) => void;
   minimaxModel: string;
   setMinimaxModel: (value: string) => void;
+  arkApiKey: string;
+  setArkApiKey: (value: string) => void;
+  arkApiKeyCursorOffset: number;
+  setArkApiKeyCursorOffset: (offset: number) => void;
+  arkModel: string;
+  setArkModel: (value: string) => void;
+  arkModelCursorOffset: number;
+  setArkModelCursorOffset: (offset: number) => void;
+  handleArkModelSubmit: (value: string) => void;
+  handleArkApiKeySubmit: (value: string) => void;
 };
 function OAuthStatusMessage(t0) {
-  const $ = _c(51);
+  const $ = _c(97);
   const {
     oauthStatus,
     mode,
@@ -455,7 +594,17 @@ function OAuthStatusMessage(t0) {
     setMinimaxApiKeyCursorOffset,
     handleMinimaxApiKeySubmit,
     minimaxModel,
-    setMinimaxModel
+    setMinimaxModel,
+    arkApiKey,
+    setArkApiKey,
+    arkApiKeyCursorOffset,
+    setArkApiKeyCursorOffset,
+    arkModel,
+    setArkModel,
+    arkModelCursorOffset,
+    setArkModelCursorOffset,
+    handleArkModelSubmit,
+    handleArkApiKeySubmit
   } = t0;
   switch (oauthStatus.state) {
     case "idle":
@@ -499,8 +648,11 @@ function OAuthStatusMessage(t0) {
         let t6;
         if ($[5] === Symbol.for("react.memo_cache_sentinel")) {
           t6 = [t4, t5, {
-            label: <Text>MiniMax (国内) ·{" "}<Text dimColor={true}>M2.7 OAuth 登录</Text>{"\n"}</Text>,
+            label: <Text>MiniMax (国内) ·{" "}<Text dimColor={true}>Anthropic-compatible / API key</Text>{"\n"}</Text>,
             value: "minimax"
+          }, {
+            label: <Text>Ark ·{" "}<Text dimColor={true}>OpenAI-compatible</Text>{"\n"}</Text>,
+            value: "ark"
           }, {
             label: <Text>3rd-party platform ·{" "}<Text dimColor={true}>Amazon Bedrock, Microsoft Foundry, or Vertex AI</Text>{"\n"}</Text>,
             value: "platform"
@@ -521,6 +673,11 @@ function OAuthStatusMessage(t0) {
                 logEvent("tengu_oauth_minimax_selected", {});
                 setOAuthStatus({
                   state: "minimax_setup"
+                });
+              } else if (value_0 === "ark") {
+                logEvent("tengu_oauth_ark_selected", {});
+                setOAuthStatus({
+                  state: "ark_setup"
                 });
               } else {
                 setOAuthStatus({
@@ -621,8 +778,8 @@ function OAuthStatusMessage(t0) {
         let t2;
         let t3;
         if ($[21] === Symbol.for("react.memo_cache_sentinel")) {
-          t2 = <Text>Claude Code supports Minimax through its Anthropic-compatible API.</Text>;
-          t3 = <Text>You'll need to select a model and enter your Minimax API key to continue.</Text>;
+          t2 = <Text>MiniMax follows the Anthropic-compatible request path, so it reuses the existing Anthropic client.</Text>;
+          t3 = <Text>You'll need to select a model and enter your MiniMax API key to continue.</Text>;
           $[21] = t2;
           $[22] = t3;
         } else {
@@ -751,6 +908,128 @@ function OAuthStatusMessage(t0) {
           $[61] = t3;
         } else {
           t3 = $[61];
+        }
+        return t3;
+      }
+    case "ark_setup":
+      {
+        let t1;
+        if ($[62] === Symbol.for("react.memo_cache_sentinel")) {
+          t1 = <Text bold={true}>Using Ark</Text>;
+          $[62] = t1;
+        } else {
+          t1 = $[62];
+        }
+        let t2;
+        let t3;
+        if ($[63] === Symbol.for("react.memo_cache_sentinel")) {
+          t2 = <Text>Ark uses an OpenAI-compatible API, so it follows a different request path from Anthropic-compatible providers.</Text>;
+          t3 = <Text>You'll enter the model name and API key on the next screens.</Text>;
+          $[63] = t2;
+          $[64] = t3;
+        } else {
+          t2 = $[63];
+          t3 = $[64];
+        }
+        let t4;
+        if ($[65] === Symbol.for("react.memo_cache_sentinel")) {
+          t4 = <Text bold={true}>Configuration:</Text>;
+          $[65] = t4;
+        } else {
+          t4 = $[65];
+        }
+        let t5;
+        if ($[66] === Symbol.for("react.memo_cache_sentinel")) {
+          t5 = <Text>· API Base URL: https://ark.cn-beijing.volces.com/api/v3</Text>;
+          $[66] = t5;
+        } else {
+          t5 = $[66];
+        }
+        let t6;
+        if ($[67] === Symbol.for("react.memo_cache_sentinel")) {
+          t6 = <Box marginTop={1}><Text color="permission">Press <Text bold={true}>Enter</Text> to continue to model selection.</Text></Box>;
+          $[67] = t6;
+        } else {
+          t6 = $[67];
+        }
+        let t7;
+        if ($[68] !== t1 || $[69] !== t2 || $[70] !== t3 || $[71] !== t4 || $[72] !== t5 || $[73] !== t6) {
+          t7 = <Box flexDirection="column" gap={1} marginTop={1}>{t1}<Box flexDirection="column" gap={1}>{t2}{t3}{t4}{t5}{t6}</Box></Box>;
+          $[68] = t1;
+          $[69] = t2;
+          $[70] = t3;
+          $[71] = t4;
+          $[72] = t5;
+          $[73] = t6;
+          $[74] = t7;
+        } else {
+          t7 = $[74];
+        }
+        return t7;
+      }
+    case "ark_model_input":
+      {
+        let t1;
+        if ($[75] === Symbol.for("react.memo_cache_sentinel")) {
+          t1 = <Text>Enter your Ark model name:</Text>;
+          $[75] = t1;
+        } else {
+          t1 = $[75];
+        }
+        let t2;
+        if ($[76] !== arkModelCursorOffset || $[77] !== handleArkModelSubmit || $[78] !== arkModel || $[79] !== setArkModelCursorOffset || $[80] !== setArkModel || $[81] !== textInputColumns) {
+          t2 = <Box><TextInput value={arkModel} onChange={setArkModel} onSubmit={handleArkModelSubmit} cursorOffset={arkModelCursorOffset} onChangeCursorOffset={setArkModelCursorOffset} columns={textInputColumns} /></Box>;
+          $[76] = arkModelCursorOffset;
+          $[77] = handleArkModelSubmit;
+          $[78] = arkModel;
+          $[79] = setArkModelCursorOffset;
+          $[80] = setArkModel;
+          $[81] = textInputColumns;
+          $[82] = t2;
+        } else {
+          t2 = $[82];
+        }
+        let t3;
+        if ($[83] !== t1 || $[84] !== t2) {
+          t3 = <Box flexDirection="column" gap={1}>{t1}{t2}</Box>;
+          $[83] = t1;
+          $[84] = t2;
+          $[85] = t3;
+        } else {
+          t3 = $[85];
+        }
+        return t3;
+      }
+    case "ark_api_key_input":
+      {
+        let t1;
+        if ($[86] === Symbol.for("react.memo_cache_sentinel")) {
+          t1 = <Text>Enter your Ark API key:</Text>;
+          $[86] = t1;
+        } else {
+          t1 = $[86];
+        }
+        let t2;
+        if ($[87] !== arkApiKeyCursorOffset || $[88] !== handleArkApiKeySubmit || $[89] !== arkApiKey || $[90] !== setArkApiKeyCursorOffset || $[91] !== setArkApiKey || $[92] !== textInputColumns) {
+          t2 = <Box><TextInput value={arkApiKey} onChange={setArkApiKey} onSubmit={handleArkApiKeySubmit} cursorOffset={arkApiKeyCursorOffset} onChangeCursorOffset={setArkApiKeyCursorOffset} columns={textInputColumns} mask="*" /></Box>;
+          $[87] = arkApiKeyCursorOffset;
+          $[88] = handleArkApiKeySubmit;
+          $[89] = arkApiKey;
+          $[90] = setArkApiKeyCursorOffset;
+          $[91] = setArkApiKey;
+          $[92] = textInputColumns;
+          $[93] = t2;
+        } else {
+          t2 = $[93];
+        }
+        let t3;
+        if ($[94] !== t1 || $[95] !== t2) {
+          t3 = <Box flexDirection="column" gap={1}>{t1}{t2}</Box>;
+          $[94] = t1;
+          $[95] = t2;
+          $[96] = t3;
+        } else {
+          t3 = $[96];
         }
         return t3;
       }

@@ -35,6 +35,8 @@ import { getGlobalConfig } from '../config.js'
 
 // @[MODEL LAUNCH]: Update all the available and default model option strings below.
 
+export const CUSTOM_MODEL_OPTION = '__custom_model__'
+
 export type ModelOption = {
   value: ModelSetting
   label: string
@@ -494,19 +496,28 @@ export function getModelOptions(fastMode = false): ModelOption[] {
     customModel = initialMainLoopModel
   }
   if (customModel === null || options.some(opt => opt.value === customModel)) {
-    return filterModelOptionsByAllowlist(options)
+    return appendCustomModelOption(filterModelOptionsByAllowlist(options))
   } else if (customModel === 'opusplan') {
-    return filterModelOptionsByAllowlist([...options, getOpusPlanOption()])
+    return appendCustomModelOption(
+      filterModelOptionsByAllowlist([
+        ...options,
+        getOpusPlanOption(),
+      ]),
+    )
   } else if (customModel === 'opus' && getAPIProvider() === 'firstParty') {
-    return filterModelOptionsByAllowlist([
-      ...options,
-      getMaxOpusOption(fastMode),
-    ])
+    return appendCustomModelOption(
+      filterModelOptionsByAllowlist([
+        ...options,
+        getMaxOpusOption(fastMode),
+      ]),
+    )
   } else if (customModel === 'opus[1m]' && getAPIProvider() === 'firstParty') {
-    return filterModelOptionsByAllowlist([
-      ...options,
-      getMergedOpus1MOption(fastMode),
-    ])
+    return appendCustomModelOption(
+      filterModelOptionsByAllowlist([
+        ...options,
+        getMergedOpus1MOption(fastMode),
+      ]),
+    )
   } else {
     // Try to show a human-readable label for known Anthropic models, with an
     // upgrade hint if the alias now resolves to a newer version.
@@ -520,7 +531,7 @@ export function getModelOptions(fastMode = false): ModelOption[] {
         description: 'Custom model',
       })
     }
-    return filterModelOptionsByAllowlist(options)
+    return appendCustomModelOption(filterModelOptionsByAllowlist(options))
   }
 }
 
@@ -537,4 +548,18 @@ function filterModelOptionsByAllowlist(options: ModelOption[]): ModelOption[] {
     opt =>
       opt.value === null || (opt.value !== null && isModelAllowed(opt.value)),
   )
+}
+
+function appendCustomModelOption(options: ModelOption[]): ModelOption[] {
+  if (options.some(existing => existing.value === CUSTOM_MODEL_OPTION)) {
+    return options
+  }
+  return [
+    ...options,
+    {
+      value: CUSTOM_MODEL_OPTION,
+      label: 'Others',
+      description: 'Configure a custom API provider',
+    },
+  ]
 }

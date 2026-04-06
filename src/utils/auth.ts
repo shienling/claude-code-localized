@@ -1142,6 +1142,10 @@ export async function saveApiKey(apiKey: string): Promise<void> {
     const approved = current.customApiKeyResponses?.approved ?? []
     return {
       ...current,
+      env: {
+        ...current.env,
+        MODEL_PROTOCOL_FAMILY: 'anthropic-compatible',
+      },
       // Only save to config if keychain save failed or not on darwin
       primaryApiKey: savedToKeychain ? current.primaryApiKey : apiKey,
       customApiKeyResponses: {
@@ -1231,6 +1235,13 @@ export function saveOAuthTokensIfNeeded(tokens: OAuthTokens): {
     const updateStatus = secureStorage.update(storageData)
 
     if (updateStatus.success) {
+      saveGlobalConfig(current => ({
+        ...current,
+        env: {
+          ...current.env,
+          MODEL_PROTOCOL_FAMILY: 'anthropic-compatible',
+        },
+      }))
       logEvent('tengu_oauth_tokens_saved', { storageBackend })
     } else {
       logEvent('tengu_oauth_tokens_save_failed', { storageBackend })

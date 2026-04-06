@@ -622,10 +622,10 @@ export const SettingsSchema = lazySchema(() =>
         ),
       // Force a specific login method: 'claudeai' for Claude Pro/Max, 'console' for Console billing
       forceLoginMethod: z
-        .enum(['claudeai', 'console'])
+        .enum(['claudeai', 'console', 'ark'])
         .optional()
         .describe(
-          'Force a specific login method: "claudeai" for Claude Pro/Max, "console" for Console billing',
+          'Force a specific login method: "claudeai" for Claude Pro/Max, "console" for Console billing, "ark" for Ark / OpenAI-compatible',
         ),
       // Organization UUID to use for OAuth login (will be added as URL param to authorization URL)
       forceLoginOrgUUID: z

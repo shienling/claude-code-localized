@@ -2,7 +2,7 @@
 
 <p align="right"><strong>中文</strong> | <a href="./README.en.md">English</a></p>
 
-基于 Claude Code 泄露源码修复的**本地可运行版本**，支持接入任意 Anthropic 兼容 API（如 MiniMax、OpenRouter 等）。
+基于 Claude Code 泄露源码修复的**本地可运行版本**，支持接入 Anthropic-compatible API（如 MiniMax、OpenRouter 等），也支持通过独立的 Ark / OpenAI-compatible 通道接入部分服务。
 
 > 原始泄露源码无法直接运行。本仓库修复了启动链路中的多个阻塞问题，使完整的 Ink TUI 交互界面可以在本地工作。
 
@@ -373,7 +373,7 @@ bun install
 cp .env.example .env
 ```
 
-编辑 `.env`（以下示例使用 [MiniMax](https://platform.minimaxi.com/subscribe/token-plan?code=1TG2Cseab2&source=link) 作为 API 提供商，也可替换为其他兼容服务）：
+编辑 `.env`（以下示例使用 [MiniMax](https://platform.minimaxi.com/subscribe/token-plan?code=1TG2Cseab2&source=link) 作为 API 提供商，也可替换为其他 Anthropic-compatible 服务）：
 
 ```env
 # API 认证（二选一）
@@ -410,6 +410,8 @@ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 > ```
 >
 > 配置优先级：环境变量 > `.env` 文件 > `~/.claude/settings.json`
+
+> **Ark 提示**：如果你要使用 Ark，请走登录界面的 `Ark` 入口，或者在环境变量里使用 `ARK_*` / `MODEL_PROTOCOL_FAMILY=openai-compatible`，不要复用 `ANTHROPIC_*`。
 
 ### 4. 启动
 
@@ -558,7 +560,7 @@ src/
 | 语言 | TypeScript |
 | 终端 UI | React + [Ink](https://github.com/vadimdemedes/ink) |
 | CLI 解析 | Commander.js |
-| API | Anthropic SDK |
+| API | Anthropic SDK / OpenAI-compatible adapter |
 | 协议 | MCP, LSP |
 
 ---
@@ -567,11 +569,12 @@ src/
 
 ### Q: `undefined is not an object (evaluating 'usage.input_tokens')`
 
-**原因**：`ANTHROPIC_BASE_URL` 配置不正确，API 端点返回的不是 Anthropic 协议格式的 JSON，而是 HTML 页面或其他格式。
+**原因**：你把 `ANTHROPIC_BASE_URL` 指向了一个不兼容 Anthropic Messages API 的端点，或者把 OpenAI-compatible 服务误接到了 Anthropic 主路径上。
 
-本项目使用 **Anthropic Messages API 协议**，`ANTHROPIC_BASE_URL` 必须指向一个兼容 Anthropic `/v1/messages` 接口的端点。Anthropic SDK 会自动在 base URL 后面拼接 `/v1/messages`，所以：
+本项目的主请求路径使用 **Anthropic Messages API 协议**，`ANTHROPIC_BASE_URL` 必须指向一个兼容 Anthropic `/v1/messages` 接口的端点。Anthropic SDK 会自动在 base URL 后面拼接 `/v1/messages`，所以：
 
 - MiniMax：`ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic` ✅
+- Ark：使用登录界面的 `Ark` 入口，走 OpenAI-compatible 通道 ✅
 - OpenRouter：`ANTHROPIC_BASE_URL=https://openrouter.ai/api` ✅
 - OpenRouter 错误写法：`ANTHROPIC_BASE_URL=https://openrouter.ai/anthropic` ❌（返回 HTML）
 
@@ -593,7 +596,9 @@ bun upgrade
 
 ### Q: 怎么接入 OpenAI / DeepSeek / Ollama 等非 Anthropic 模型？
 
-本项目只支持 Anthropic 协议。如果模型供应商不直接支持 Anthropic 协议，需要用 [LiteLLM](https://github.com/BerriAI/litellm) 等代理做协议转换（OpenAI → Anthropic）。
+如果供应商原生支持 Anthropic-compatible 协议，可以继续走主路径；如果只支持 OpenAI-compatible，请使用登录界面的 `Ark` 入口或同类 OpenAI-compatible 适配器。
+
+如果你更希望把 OpenAI / DeepSeek / Ollama 等模型统一接到主路径上，也可以用 [LiteLLM](https://github.com/BerriAI/litellm) 等代理做协议转换（OpenAI → Anthropic）。
 
 详细配置步骤请参考：[第三方模型使用指南](docs/third-party-models.md)
 

@@ -10,7 +10,9 @@ import { useKeybindings } from '../keybindings/useKeybinding.js';
 import { useAppState, useSetAppState } from '../state/AppState.js';
 import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, modelSupportsEffort, modelSupportsMaxEffort, resolvePickerEffortPersistence, toPersistableEffort } from '../utils/effort.js';
 import { getDefaultMainLoopModel, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model.js';
-import { getModelOptions } from '../utils/model/modelOptions.js';
+import { CUSTOM_MODEL_OPTION, getModelOptions } from '../utils/model/modelOptions.js';
+import { saveGlobalConfig } from '../utils/config.js';
+import { applyConfigEnvironmentVariables } from '../utils/managedEnv.js';
 import { getSettingsForSource, updateSettingsForSource } from '../utils/settings/settings.js';
 import { ConfigurableShortcutHint } from './ConfigurableShortcutHint.js';
 import { Select } from './CustomSelect/index.js';
@@ -18,6 +20,9 @@ import { Byline } from './design-system/Byline.js';
 import { KeyboardShortcutHint } from './design-system/KeyboardShortcutHint.js';
 import { Pane } from './design-system/Pane.js';
 import { effortLevelToSymbol } from './EffortIndicator.js';
+import { createArkClient } from '../providers/ark.js';
+import { buildOpenAICompatibleEnv } from '../providers/openai-compatible/config.js';
+import TextInput from './TextInput.js';
 export type Props = {
   initial: string | null;
   sessionModel?: ModelSetting;
@@ -36,6 +41,155 @@ export type Props = {
   skipSettingsWrite?: boolean;
 };
 const NO_PREFERENCE = '__NO_PREFERENCE__';
+type CustomProviderDraft = {
+  baseURL: string;
+  model: string;
+  apiKey: string;
+};
+type CustomProviderStep = 'baseURL' | 'model' | 'apiKey';
+function getInitialCustomProviderDraft(): CustomProviderDraft {
+  return {
+    baseURL: process.env.OPENAI_COMPATIBLE_BASE_URL?.trim() || process.env.ARK_BASE_URL?.trim() || '',
+    model: process.env.OPENAI_COMPATIBLE_MODEL?.trim() || process.env.ARK_MODEL?.trim() || '',
+    apiKey: process.env.OPENAI_COMPATIBLE_API_KEY?.trim() || process.env.ARK_API_KEY?.trim() || '',
+  };
+}
+function CustomProviderEntry({
+  initialValue,
+  onBack,
+  onSubmit
+}: {
+  initialValue: CustomProviderDraft;
+  onBack: () => void;
+  onSubmit: (value: string) => void | Promise<void>;
+}) {
+  const [draft, setDraft] = useState(initialValue);
+  const [step, setStep] = useState<CustomProviderStep>('baseURL');
+  const [value, setValue] = useState(initialValue.baseURL);
+  const [cursorOffset, setCursorOffset] = useState(initialValue.baseURL.length);
+  const [error, setError] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+
+  React.useEffect(() => {
+    setDraft(initialValue);
+    setStep('baseURL');
+    setValue(initialValue.baseURL);
+    setCursorOffset(initialValue.baseURL.length);
+    setError(null);
+  }, [initialValue]);
+
+  React.useEffect(() => {
+    const currentValue = draft[step];
+    setValue(currentValue);
+    setCursorOffset(currentValue.length);
+    setError(null);
+  }, [draft, step]);
+
+  const stepMeta =
+    step === 'baseURL'
+      ? {
+          title: 'Enter API address',
+          description: 'Type the provider base URL, then press Enter.',
+        }
+      : step === 'model'
+        ? {
+            title: 'Enter model name',
+            description: 'Type the model ID you want to use, then press Enter.',
+          }
+        : {
+            title: 'Enter API key',
+            description: 'Paste the API key, then press Enter to test and save.',
+          };
+
+  async function persistProviderConfig(nextDraft: CustomProviderDraft) {
+    const client = createArkClient(buildOpenAICompatibleEnv(nextDraft))
+    if (!client) {
+      throw new Error('Unable to initialize the provider client')
+    }
+
+    await client.createChatCompletionFromAnthropicMessages(
+      [
+        {
+          role: 'user',
+          content: 'ping',
+        },
+      ],
+      {
+        max_tokens: 1,
+        temperature: 0,
+      },
+    )
+
+    saveGlobalConfig(current => ({
+      ...current,
+      env: {
+        ...current.env,
+        ...buildOpenAICompatibleEnv(nextDraft),
+      },
+    }))
+    applyConfigEnvironmentVariables()
+  }
+
+  function handleBack() {
+    if (step === 'baseURL') {
+      onBack();
+      return;
+    }
+    setStep(step === 'apiKey' ? 'model' : 'baseURL');
+  }
+
+  async function handleSubmit(rawValue: string) {
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+      setError(
+        step === 'baseURL'
+          ? 'API address cannot be empty'
+          : step === 'model'
+            ? 'Model name cannot be empty'
+            : 'API key cannot be empty',
+      );
+      return;
+    }
+
+    if (step === 'baseURL') {
+      try {
+        const normalizedBaseURL = new URL(trimmed).toString().replace(/\/+$/, '');
+        setDraft(prev => ({ ...prev, baseURL: normalizedBaseURL }));
+        setStep('model');
+        return;
+      } catch {
+        setError('API address must be a valid URL');
+        return;
+      }
+    }
+
+    if (step === 'model') {
+      setDraft(prev => ({ ...prev, model: trimmed }));
+      setStep('apiKey');
+      return;
+    }
+
+    const nextDraft = { ...draft, apiKey: trimmed }
+    setIsValidating(true);
+    setError(null);
+    try {
+      await persistProviderConfig(nextDraft);
+      await onSubmit(nextDraft.model);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsValidating(false);
+    }
+  }
+
+  return <Box flexDirection="column" gap={1}>
+      <Text bold={true}>{stepMeta.title}</Text>
+      <Text dimColor={true}>{stepMeta.description} Press Esc to go back.</Text>
+      {error && <Text color="error">{error}</Text>}
+      {isValidating && <Text dimColor={true}>Testing connection…</Text>}
+      <Box><TextInput value={value} onChange={setValue} onSubmit={handleSubmit} onExit={handleBack} cursorOffset={cursorOffset} onChangeCursorOffset={setCursorOffset} columns={80} showCursor={true} /></Box>
+    </Box>;
+}
 export function ModelPicker(t0) {
   const $ = _c(82);
   const {
@@ -64,6 +218,8 @@ export function ModelPicker(t0) {
     t1 = $[1];
   }
   const [effort, setEffort] = useState(t1);
+  const [showCustomModelEntry, setShowCustomModelEntry] = useState(false);
+  const [customProviderDraft, setCustomProviderDraft] = useState<CustomProviderDraft>(getInitialCustomProviderDraft);
   const t2 = isFastMode ?? false;
   let t3;
   if ($[2] !== t2) {
@@ -258,6 +414,25 @@ export function ModelPicker(t0) {
     t14 = $[40];
   }
   const handleSelect = t14;
+  const handleCustomModelSubmit = async (model: string) => {
+    setShowCustomModelEntry(false);
+    setCustomProviderDraft(getInitialCustomProviderDraft());
+    handleSelect(model);
+  };
+  const handleSelectionChange = (value_0: string) => {
+    if (value_0 === CUSTOM_MODEL_OPTION) {
+      setCustomProviderDraft(getInitialCustomProviderDraft());
+      setShowCustomModelEntry(true);
+      return;
+    }
+    setShowCustomModelEntry(false);
+    setCustomProviderDraft(getInitialCustomProviderDraft());
+    handleSelect(value_0);
+  };
+  const handleCustomModelBack = () => {
+    setShowCustomModelEntry(false);
+    setCustomProviderDraft(getInitialCustomProviderDraft());
+  };
   let t15;
   if ($[41] === Symbol.for("react.memo_cache_sentinel")) {
     t15 = <Text color="remember" bold={true}>Select model</Text>;
@@ -292,96 +467,89 @@ export function ModelPicker(t0) {
     t19 = $[48];
   }
   const t20 = onCancel ?? _temp4;
-  let t21;
-  if ($[49] !== handleFocus || $[50] !== handleSelect || $[51] !== initialFocusValue || $[52] !== initialValue || $[53] !== selectOptions || $[54] !== t20 || $[55] !== visibleCount) {
-    t21 = <Box flexDirection="column"><Select defaultValue={initialValue} defaultFocusValue={initialFocusValue} options={selectOptions} onChange={handleSelect} onFocus={handleFocus} onCancel={t20} visibleOptionCount={visibleCount} /></Box>;
-    $[49] = handleFocus;
-    $[50] = handleSelect;
-    $[51] = initialFocusValue;
-    $[52] = initialValue;
-    $[53] = selectOptions;
-    $[54] = t20;
-    $[55] = visibleCount;
-    $[56] = t21;
-  } else {
-    t21 = $[56];
-  }
+  const t21 = showCustomModelEntry ? <Box flexDirection="column" marginTop={1}><CustomProviderEntry initialValue={customProviderDraft} onBack={handleCustomModelBack} onSubmit={handleCustomModelSubmit} /></Box> : <Box flexDirection="column"><Select defaultValue={initialValue} defaultFocusValue={initialFocusValue} options={selectOptions} onChange={handleSelectionChange} onFocus={handleFocus} onCancel={t20} visibleOptionCount={visibleCount} /></Box>;
   let t22;
-  if ($[57] !== hiddenCount) {
+  if (showCustomModelEntry) {
+    t22 = null;
+  } else if ($[49] !== hiddenCount) {
     t22 = hiddenCount > 0 && <Box paddingLeft={3}><Text dimColor={true}>and {hiddenCount} more…</Text></Box>;
-    $[57] = hiddenCount;
-    $[58] = t22;
+    $[49] = hiddenCount;
+    $[50] = t22;
   } else {
-    t22 = $[58];
+    t22 = $[50];
   }
   let t23;
-  if ($[59] !== t21 || $[60] !== t22) {
+  if ($[51] !== t21 || $[52] !== t22) {
     t23 = <Box flexDirection="column" marginBottom={1}>{t21}{t22}</Box>;
-    $[59] = t21;
-    $[60] = t22;
-    $[61] = t23;
+    $[51] = t21;
+    $[52] = t22;
+    $[53] = t23;
   } else {
-    t23 = $[61];
+    t23 = $[53];
   }
   let t24;
-  if ($[62] !== displayEffort || $[63] !== focusedDefaultEffort || $[64] !== focusedModelName || $[65] !== focusedSupportsEffort) {
+  if (showCustomModelEntry) {
+    t24 = null;
+  } else if ($[54] !== displayEffort || $[55] !== focusedDefaultEffort || $[56] !== focusedModelName || $[57] !== focusedSupportsEffort) {
     t24 = <Box marginBottom={1} flexDirection="column">{focusedSupportsEffort ? <Text dimColor={true}><EffortLevelIndicator effort={displayEffort} />{" "}{capitalize(displayEffort)} effort{displayEffort === focusedDefaultEffort ? " (default)" : ""}{" "}<Text color="subtle">← → to adjust</Text></Text> : <Text color="subtle"><EffortLevelIndicator effort={undefined} /> Effort not supported{focusedModelName ? ` for ${focusedModelName}` : ""}</Text>}</Box>;
-    $[62] = displayEffort;
-    $[63] = focusedDefaultEffort;
-    $[64] = focusedModelName;
-    $[65] = focusedSupportsEffort;
-    $[66] = t24;
+    $[54] = displayEffort;
+    $[55] = focusedDefaultEffort;
+    $[56] = focusedModelName;
+    $[57] = focusedSupportsEffort;
+    $[58] = t24;
   } else {
-    t24 = $[66];
+    t24 = $[58];
   }
   let t25;
-  if ($[67] !== showFastModeNotice) {
+  if (showCustomModelEntry) {
+    t25 = null;
+  } else if ($[59] !== showFastModeNotice) {
     t25 = isFastModeEnabled() ? showFastModeNotice ? <Box marginBottom={1}><Text dimColor={true}>Fast mode is <Text bold={true}>ON</Text> and available with{" "}{FAST_MODE_MODEL_DISPLAY} only (/fast). Switching to other models turn off fast mode.</Text></Box> : isFastModeAvailable() && !isFastModeCooldown() ? <Box marginBottom={1}><Text dimColor={true}>Use <Text bold={true}>/fast</Text> to turn on Fast mode ({FAST_MODE_MODEL_DISPLAY} only).</Text></Box> : null : null;
-    $[67] = showFastModeNotice;
-    $[68] = t25;
+    $[59] = showFastModeNotice;
+    $[60] = t25;
   } else {
-    t25 = $[68];
+    t25 = $[60];
   }
   let t26;
-  if ($[69] !== t19 || $[70] !== t23 || $[71] !== t24 || $[72] !== t25) {
+  if ($[61] !== t19 || $[62] !== t23 || $[63] !== t24 || $[64] !== t25) {
     t26 = <Box flexDirection="column">{t19}{t23}{t24}{t25}</Box>;
-    $[69] = t19;
-    $[70] = t23;
-    $[71] = t24;
-    $[72] = t25;
-    $[73] = t26;
+    $[61] = t19;
+    $[62] = t23;
+    $[63] = t24;
+    $[64] = t25;
+    $[65] = t26;
   } else {
-    t26 = $[73];
+    t26 = $[65];
   }
   let t27;
-  if ($[74] !== exitState || $[75] !== isStandaloneCommand) {
+  if ($[66] !== exitState || $[67] !== isStandaloneCommand) {
     t27 = isStandaloneCommand && <Text dimColor={true} italic={true}>{exitState.pending ? <>Press {exitState.keyName} again to exit</> : <Byline><KeyboardShortcutHint shortcut="Enter" action="confirm" /><ConfigurableShortcutHint action="select:cancel" context="Select" fallback="Esc" description="exit" /></Byline>}</Text>;
-    $[74] = exitState;
-    $[75] = isStandaloneCommand;
-    $[76] = t27;
+    $[66] = exitState;
+    $[67] = isStandaloneCommand;
+    $[68] = t27;
   } else {
-    t27 = $[76];
+    t27 = $[68];
   }
   let t28;
-  if ($[77] !== t26 || $[78] !== t27) {
+  if ($[69] !== t26 || $[70] !== t27) {
     t28 = <Box flexDirection="column">{t26}{t27}</Box>;
-    $[77] = t26;
-    $[78] = t27;
-    $[79] = t28;
+    $[69] = t26;
+    $[70] = t27;
+    $[71] = t28;
   } else {
-    t28 = $[79];
+    t28 = $[71];
   }
   const content = t28;
   if (!isStandaloneCommand) {
     return content;
   }
   let t29;
-  if ($[80] !== content) {
+  if ($[72] !== content) {
     t29 = <Pane color="permission">{content}</Pane>;
-    $[80] = content;
-    $[81] = t29;
+    $[72] = content;
+    $[73] = t29;
   } else {
-    t29 = $[81];
+    t29 = $[73];
   }
   return t29;
 }
@@ -400,6 +568,7 @@ function _temp(s) {
 }
 function resolveOptionModel(value?: string): string | undefined {
   if (!value) return undefined;
+  if (value === CUSTOM_MODEL_OPTION) return undefined;
   return value === NO_PREFERENCE ? getDefaultMainLoopModel() : parseUserSpecifiedModel(value);
 }
 function EffortLevelIndicator(t0) {
